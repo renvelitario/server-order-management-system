@@ -7,6 +7,7 @@ export const users = pgTable('ims_users', {
   username: varchar('username', { length: 200 }).notNull(),
   acc_type: varchar('acc_type', { length: 50 }).notNull().default('User'), // 'Admin' or 'User'
   status: varchar('status', { length: 50 }).notNull().default('Active'), // 'Active' or 'Inactive'
+  inactivity_timeout_minutes: integer('inactivity_timeout_minutes').notNull().default(60),
   supabase_id: varchar('supabase_id', { length: 255 }) // To link with auth.users
 });
 

@@ -5,6 +5,9 @@ import { eq } from 'drizzle-orm';
 import { requireAuth } from '../middleware/auth.js';
 
 const router = express.Router();
+const DEFAULT_INACTIVITY_MINUTES = 60;
+const MIN_INACTIVITY_MINUTES = 10;
+const MAX_INACTIVITY_MINUTES = 480;
 
 const publicUserColumns = {
   user_id: users.user_id,
@@ -12,7 +15,18 @@ const publicUserColumns = {
   username: users.username,
   acc_type: users.acc_type,
   status: users.status,
+  inactivity_timeout_minutes: users.inactivity_timeout_minutes,
   supabase_id: users.supabase_id
+};
+
+const normalizeInactivityTimeout = (value) => {
+  const parsedValue = Number(value);
+
+  if (!Number.isFinite(parsedValue)) {
+    return DEFAULT_INACTIVITY_MINUTES;
+  }
+
+  return Math.min(MAX_INACTIVITY_MINUTES, Math.max(MIN_INACTIVITY_MINUTES, Math.round(parsedValue)));
 };
 
 // Register a new user
@@ -44,6 +58,7 @@ router.post('/register', requireAuth, async (req, res) => {
       username: username.trim(),
       acc_type: acc_type || 'User',
       status: status || 'Active',
+      inactivity_timeout_minutes: DEFAULT_INACTIVITY_MINUTES,
       supabase_id: supabaseId
     }).returning();
 
@@ -149,6 +164,34 @@ router.put('/profile', requireAuth, async (req, res) => {
    } catch (error) {
      res.status(500).json({ error: 'Internal server error' });
    }
+});
+
+router.put('/session-timeout', requireAuth, async (req, res) => {
+  const { inactivity_timeout_minutes } = req.body;
+
+  try {
+    let localUser = await db.select(publicUserColumns).from(users).where(eq(users.supabase_id, req.user.id)).limit(1);
+    if (!localUser.length) {
+      localUser = await db.select(publicUserColumns).from(users).where(eq(users.email, req.user.email)).limit(1);
+    }
+
+    if (!localUser.length) {
+      return res.status(404).json({ error: 'User not found in local DB' });
+    }
+
+    const normalizedTimeout = normalizeInactivityTimeout(inactivity_timeout_minutes);
+
+    const [updatedUser] = await db.update(users)
+      .set({
+        inactivity_timeout_minutes: normalizedTimeout,
+      })
+      .where(eq(users.user_id, localUser[0].user_id))
+      .returning(publicUserColumns);
+
+    res.json(updatedUser);
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 router.post('/change-password', requireAuth, async (req, res) => {
