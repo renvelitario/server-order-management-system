@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, timestamp, doublePrecision, varchar } from 'drizzle-orm/pg-core';
+import { pgTable, serial, text, integer, timestamp, doublePrecision, varchar, foreignKey } from 'drizzle-orm/pg-core';
 
 export const users = pgTable('ims_users', {
 	user_id: serial('user_id').primaryKey(),
@@ -20,7 +20,7 @@ export const products = pgTable('ims_products', {
 });
 
 export const customers = pgTable('ims_customers', {
-	cust_id: serial('cust_id').primaryKey(),
+	customer_id: serial('customer_id').primaryKey(),
 	name: varchar('name', { length: 200 }).notNull(),
 	address: text('address').notNull(),
 	contact_no: varchar('contact_no', { length: 20 }).notNull()
@@ -28,15 +28,40 @@ export const customers = pgTable('ims_customers', {
 
 export const orders = pgTable('ims_orders', {
 	order_id: serial('order_id').primaryKey(),
-	product_id: varchar('product_id', { length: 255 }).notNull(), // using varchar since original was varchar
 	customer_id: integer('customer_id').notNull(),
-	quantity: integer('quantity').notNull(),
 	order_date: timestamp('order_date').defaultNow().notNull()
-});
+}, (table) => ({
+	customerIdFk: foreignKey({
+		columns: [table.customer_id],
+		foreignColumns: [customers.customer_id]
+	})
+}));
+
+export const orderItems = pgTable('ims_order_items', {
+	order_item_id: serial('order_item_id').primaryKey(),
+	order_id: integer('order_id').notNull(),
+	product_id: integer('product_id').notNull(),
+	quantity: integer('quantity').notNull(),
+	price: doublePrecision('price').notNull()
+}, (table) => ({
+	orderIdFk: foreignKey({
+		columns: [table.order_id],
+		foreignColumns: [orders.order_id]
+	}),
+	productIdFk: foreignKey({
+		columns: [table.product_id],
+		foreignColumns: [products.product_id]
+	})
+}));
 
 export const purchases = pgTable('ims_purchases', {
 	purchase_id: serial('purchase_id').primaryKey(),
-	product_id: varchar('product_id', { length: 255 }).notNull(), // using varchar since original was varchar
-	quantity: varchar('quantity', { length: 255 }).notNull(), // original was varchar
+	product_id: integer('product_id').notNull(),
+	quantity: integer('quantity').notNull(),
 	purchase_date: timestamp('purchase_date').defaultNow().notNull()
-});
+}, (table) => ({
+	productIdFk: foreignKey({
+		columns: [table.product_id],
+		foreignColumns: [products.product_id]
+	})
+}));

@@ -18,7 +18,7 @@ router.get('/', async (req, res) => {
 
 router.get('/:id', async (req, res) => {
   try {
-    const customer = await db.select().from(customers).where(eq(customers.cust_id, parseInt(req.params.id)));
+    const customer = await db.select().from(customers).where(eq(customers.customer_id, parseInt(req.params.id)));
     if (!customer.length) return res.status(404).json({ error: 'Customer not found' });
     res.json(customer[0]);
   } catch (error) {
@@ -57,7 +57,7 @@ router.put('/:id', async (req, res) => {
       name: name.trim(),
       address: address.trim(),
       contact_no: contact_no.trim()
-    }).where(eq(customers.cust_id, parseInt(req.params.id))).returning();
+    }).where(eq(customers.customer_id, parseInt(req.params.id))).returning();
 
     if (!updatedCustomer) {
       return res.status(404).json({ error: 'Customer not found' });
@@ -71,7 +71,7 @@ router.put('/:id', async (req, res) => {
 
 router.delete('/:id', async (req, res) => {
   try {
-    await db.delete(customers).where(eq(customers.cust_id, parseInt(req.params.id)));
+    await db.delete(customers).where(eq(customers.customer_id, parseInt(req.params.id)));
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
