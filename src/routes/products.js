@@ -1,6 +1,6 @@
 import express from 'express';
 import { db } from '../db/db.js';
-import { products } from '../db/schema.js';
+import { products, orderItems, purchases } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 import { requireAuth } from '../middleware/auth.js';
 
@@ -85,7 +85,19 @@ router.put('/:id', async (req, res) => {
 
 router.delete('/:id', async (req, res) => {
   try {
-    await db.delete(products).where(eq(products.product_id, parseInt(req.params.id)));
+    const productId = parseInt(req.params.id);
+
+    const inOrderItems = await db.select().from(orderItems).where(eq(orderItems.product_id, productId));
+    if (inOrderItems.length > 0) {
+      return res.status(409).json({ error: 'This record cannot be deleted because it is used in other records.' });
+    }
+
+    const inPurchases = await db.select().from(purchases).where(eq(purchases.product_id, productId));
+    if (inPurchases.length > 0) {
+      return res.status(409).json({ error: 'This record cannot be deleted because it is used in other records.' });
+    }
+
+    await db.delete(products).where(eq(products.product_id, productId));
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
