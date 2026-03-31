@@ -29,6 +29,16 @@ const normalizeInactivityTimeout = (value) => {
   return Math.min(MAX_INACTIVITY_MINUTES, Math.max(MIN_INACTIVITY_MINUTES, Math.round(parsedValue)));
 };
 
+const getLocalUserByAuthUser = async (authUser) => {
+  let localUser = await db.select(publicUserColumns).from(users).where(eq(users.supabase_id, authUser.id)).limit(1);
+
+  if (!localUser.length) {
+    localUser = await db.select(publicUserColumns).from(users).where(eq(users.email, authUser.email)).limit(1);
+  }
+
+  return localUser[0] || null;
+};
+
 // Register a new user
 router.post('/register', requireAuth, async (req, res) => {
   const { username, email, password, confirm_password, acc_type, status } = req.body;
@@ -97,14 +107,10 @@ router.post('/login', async (req, res) => {
 // Get current user details
 router.get('/me', requireAuth, async (req, res) => {
   try {
-    let localUser = await db.select(publicUserColumns).from(users).where(eq(users.supabase_id, req.user.id)).limit(1);
-    if (!localUser.length) {
-      localUser = await db.select(publicUserColumns).from(users).where(eq(users.email, req.user.email)).limit(1);
-    }
-
-    if (!localUser.length) return res.status(404).json({ error: 'User not found in local DB' });
+    const localUser = await getLocalUserByAuthUser(req.user);
+    if (!localUser) return res.status(404).json({ error: 'User not found in local DB' });
     
-    res.json(localUser[0]);
+    res.json(localUser);
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -118,16 +124,13 @@ router.put('/profile', requireAuth, async (req, res) => {
        return res.status(400).json({ error: 'Password confirmation is required' });
      }
 
-     let localUser = await db.select(publicUserColumns).from(users).where(eq(users.supabase_id, req.user.id)).limit(1);
-     if (!localUser.length) {
-      localUser = await db.select(publicUserColumns).from(users).where(eq(users.email, req.user.email)).limit(1);
-     }
+    const localUser = await getLocalUserByAuthUser(req.user);
 
-     if (!localUser.length) {
+    if (!localUser) {
       return res.status(404).json({ error: 'User not found in local DB' });
      }
 
-     const currentEmail = localUser[0].email;
+    const currentEmail = localUser.email;
 
      const { error: passwordError } = await supabaseAdmin.auth.signInWithPassword({
       email: currentEmail,
@@ -156,7 +159,7 @@ router.put('/profile', requireAuth, async (req, res) => {
         acc_type,
         supabase_id: req.user.id
        })
-       .where(eq(users.user_id, localUser[0].user_id))
+       .where(eq(users.user_id, localUser.user_id))
        .returning();
 
      const { password: _password, ...safeUser } = updatedUser;
@@ -170,12 +173,9 @@ router.put('/session-timeout', requireAuth, async (req, res) => {
   const { inactivity_timeout_minutes } = req.body;
 
   try {
-    let localUser = await db.select(publicUserColumns).from(users).where(eq(users.supabase_id, req.user.id)).limit(1);
-    if (!localUser.length) {
-      localUser = await db.select(publicUserColumns).from(users).where(eq(users.email, req.user.email)).limit(1);
-    }
+    const localUser = await getLocalUserByAuthUser(req.user);
 
-    if (!localUser.length) {
+    if (!localUser) {
       return res.status(404).json({ error: 'User not found in local DB' });
     }
 
@@ -185,7 +185,7 @@ router.put('/session-timeout', requireAuth, async (req, res) => {
       .set({
         inactivity_timeout_minutes: normalizedTimeout,
       })
-      .where(eq(users.user_id, localUser[0].user_id))
+      .where(eq(users.user_id, localUser.user_id))
       .returning(publicUserColumns);
 
     res.json(updatedUser);

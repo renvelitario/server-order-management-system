@@ -1,6 +1,6 @@
 import express from 'express';
 import { db } from '../db/db.js';
-import { orders, orderItems, products, customers } from '../db/schema.js';
+import { orders, orderItems, products } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 import { requireAuth } from '../middleware/auth.js';
 
@@ -10,19 +10,30 @@ router.use(requireAuth);
 // Get all orders with their items
 router.get('/', async (req, res) => {
   try {
-    const allOrders = await db.select().from(orders);
-    
-    const ordersWithItems = await Promise.all(
-      allOrders.map(async (order) => {
-        const items = await db.select().from(orderItems).where(eq(orderItems.order_id, order.order_id));
-        const totalAmount = items.reduce((sum, item) => sum + (Number(item.quantity) * Number(item.price)), 0);
-        return {
-          ...order,
-          items: items,
-          total_amount: totalAmount
-        };
-      })
-    );
+    const [allOrders, allOrderItems] = await Promise.all([
+      db.select().from(orders),
+      db.select().from(orderItems),
+    ]);
+
+    const itemsByOrderId = allOrderItems.reduce((acc, item) => {
+      const key = item.order_id;
+      if (!acc.has(key)) {
+        acc.set(key, []);
+      }
+      acc.get(key).push(item);
+      return acc;
+    }, new Map());
+
+    const ordersWithItems = allOrders.map((order) => {
+      const items = itemsByOrderId.get(order.order_id) || [];
+      const totalAmount = items.reduce((sum, item) => sum + (Number(item.quantity) * Number(item.price)), 0);
+
+      return {
+        ...order,
+        items,
+        total_amount: totalAmount,
+      };
+    });
 
     res.json(ordersWithItems);
   } catch (error) {
@@ -58,28 +69,33 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'customer_id and items_data array (with product_id and quantity) are required' });
     }
 
+    const productById = new Map();
+
     // Validate all products exist and have sufficient quantity
     for (const item of items_data) {
       const { product_id, quantity } = item;
+      const parsedProductId = parseInt(product_id, 10);
       const qty = parseInt(quantity, 10);
 
-      if (!product_id || Number.isNaN(qty) || qty <= 0) {
+      if (!parsedProductId || Number.isNaN(qty) || qty <= 0) {
         return res.status(400).json({ error: 'Each item must have valid product_id and quantity > 0' });
       }
 
-      const productQuery = await db.select().from(products).where(eq(products.product_id, parseInt(product_id)));
+      const productQuery = await db.select().from(products).where(eq(products.product_id, parsedProductId));
       if (!productQuery.length) {
-        return res.status(404).json({ error: `Product ${product_id} not found` });
+        return res.status(404).json({ error: `Product ${parsedProductId} not found` });
       }
 
       const product = productQuery[0];
       if (String(product.status).toLowerCase() !== 'active') {
-        return res.status(400).json({ error: `Product ${product_id} is not active` });
+        return res.status(400).json({ error: `Product ${parsedProductId} is not active` });
       }
 
       if (product.quantity < qty) {
-        return res.status(400).json({ error: `Insufficient quantity for product ${product_id}` });
+        return res.status(400).json({ error: `Insufficient quantity for product ${parsedProductId}` });
       }
+
+      productById.set(parsedProductId, product);
     }
 
     // Create order
@@ -92,15 +108,15 @@ router.post('/', async (req, res) => {
     const createdItems = [];
     for (const item of items_data) {
       const { product_id, quantity } = item;
+      const parsedProductId = parseInt(product_id, 10);
       const qty = parseInt(quantity, 10);
 
-      // Get product details for price
-      const [product] = await db.select().from(products).where(eq(products.product_id, parseInt(product_id)));
+      const product = productById.get(parsedProductId);
 
       // Create order item
       const [orderItem] = await db.insert(orderItems).values({
         order_id: newOrder.order_id,
-        product_id: parseInt(product_id),
+        product_id: parsedProductId,
         quantity: qty,
         price: product.price
       }).returning();
@@ -110,7 +126,12 @@ router.post('/', async (req, res) => {
       // Decrement product quantity
       await db.update(products)
         .set({ quantity: product.quantity - qty })
-        .where(eq(products.product_id, parseInt(product_id)));
+        .where(eq(products.product_id, parsedProductId));
+
+      productById.set(parsedProductId, {
+        ...product,
+        quantity: product.quantity - qty,
+      });
     }
 
     const totalAmount = createdItems.reduce((sum, item) => sum + (Number(item.quantity) * Number(item.price)), 0);

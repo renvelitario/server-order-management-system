@@ -50,7 +50,36 @@ router.post('/', async (req, res) => {
 
 router.delete('/:id', async (req, res) => {
   try {
-    await db.delete(purchases).where(eq(purchases.purchase_id, parseInt(req.params.id)));
+    const purchaseId = parseInt(req.params.id, 10);
+    const existingPurchase = await db
+      .select()
+      .from(purchases)
+      .where(eq(purchases.purchase_id, purchaseId))
+      .limit(1);
+
+    if (!existingPurchase.length) {
+      return res.status(404).json({ error: 'Purchase not found' });
+    }
+
+    const purchase = existingPurchase[0];
+    const targetProductQuery = await db
+      .select()
+      .from(products)
+      .where(eq(products.product_id, purchase.product_id))
+      .limit(1);
+
+    if (!targetProductQuery.length) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    const product = targetProductQuery[0];
+
+    await db
+      .update(products)
+      .set({ quantity: product.quantity - purchase.quantity })
+      .where(eq(products.product_id, purchase.product_id));
+
+    await db.delete(purchases).where(eq(purchases.purchase_id, purchaseId));
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
