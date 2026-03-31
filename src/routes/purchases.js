@@ -38,8 +38,8 @@ router.post('/', async (req, res) => {
 
     // Insert purchase
     const [newPurchase] = await db.insert(purchases).values({
-      product_id: product_id.toString(),
-      quantity: qty.toString()
+      product_id: parseInt(product_id),
+      quantity: qty
     }).returning();
     
     res.status(201).json(newPurchase);
