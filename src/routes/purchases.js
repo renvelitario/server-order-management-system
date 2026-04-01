@@ -1,89 +1,120 @@
 import express from 'express';
 import { db } from '../db/db.js';
 import { purchases, products } from '../db/schema.js';
-import { eq } from 'drizzle-orm';
+import { asc, desc, eq, sql } from 'drizzle-orm';
 import { requireAuth } from '../middleware/auth.js';
+import { requireAdmin, requireRole } from '../middleware/rbac.js';
+import { asyncHandler, AppError } from '../utils/errors.js';
+import { validate } from '../middleware/validate.js';
+import { idParamSchema } from '../validators/common.js';
+import { purchasePayloadSchema } from '../validators/entity.js';
+import { buildPaginatedResponse, parseListQuery } from '../utils/pagination.js';
 
 const router = express.Router();
 router.use(requireAuth);
 
-router.get('/', async (req, res) => {
-  try {
-    const allPurchases = await db.select().from(purchases);
-    res.json(allPurchases);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
+router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
+  const { page, limit, offset, sort, search } = parseListQuery(req.query);
+  const sortDirection = sort === 'asc' ? asc(purchases.purchase_id) : desc(purchases.purchase_id);
+  const whereClause = search
+    ? sql`(${purchases.purchase_id}::text ILIKE ${`%${search}%`} OR ${purchases.product_id}::text ILIKE ${`%${search}%`})`
+    : undefined;
 
-router.post('/', async (req, res) => {
-  try {
-    const { product_id, quantity } = req.body;
-    const qty = parseInt(quantity, 10);
+  console.info('[DEBUG_PAGINATION]', {
+    route: 'purchases.list',
+    query: req.query,
+    parsed: { page, limit, offset, sort, search },
+  });
 
-    if (!product_id || Number.isNaN(qty) || qty <= 0) {
-      return res.status(400).json({ error: 'Please enter a valid quantity greater than 0.' });
-    }
-    
-    // Increment product quantity
-    const targetProductQuery = await db.select().from(products).where(eq(products.product_id, parseInt(product_id)));
+  const [rows, totalRows] = await Promise.all([
+    db
+      .select({
+        purchase_id: purchases.purchase_id,
+        product_id: purchases.product_id,
+        quantity: purchases.quantity,
+        purchase_date: purchases.purchase_date,
+      })
+      .from(purchases)
+      .where(whereClause)
+      .orderBy(sortDirection)
+      .limit(limit)
+      .offset(offset),
+    db.select({ count: sql`count(*)::int` }).from(purchases).where(whereClause),
+  ]);
+
+  res.json(buildPaginatedResponse({
+    data: rows,
+    total: Number(totalRows[0]?.count || 0),
+    page,
+    limit,
+  }));
+}));
+
+router.post('/', requireAdmin, validate(purchasePayloadSchema), asyncHandler(async (req, res) => {
+  const { product_id, quantity } = req.body;
+
+  const result = await db.transaction(async (tx) => {
+    const targetProductQuery = await tx.select().from(products).where(eq(products.product_id, product_id)).limit(1);
     if (!targetProductQuery.length) {
-      return res.status(404).json({ error: 'Product not found' });
+      throw new AppError(404, 'Product not found.');
     }
 
     const product = targetProductQuery[0];
-    await db.update(products)
-      .set({ quantity: product.quantity + qty })
-      .where(eq(products.product_id, parseInt(product_id)));
+    await tx.update(products)
+      .set({ quantity: Number(product.quantity) + Number(quantity) })
+      .where(eq(products.product_id, product_id));
 
-    // Insert purchase
-    const [newPurchase] = await db.insert(purchases).values({
-      product_id: parseInt(product_id),
-      quantity: qty
+    const [newPurchase] = await tx.insert(purchases).values({
+      product_id,
+      quantity,
     }).returning();
-    
-    res.status(201).json(newPurchase);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
 
-router.delete('/:id', async (req, res) => {
-  try {
-    const purchaseId = parseInt(req.params.id, 10);
-    const existingPurchase = await db
+    return newPurchase;
+  });
+
+  res.status(201).json(result);
+}));
+
+router.delete('/:id', requireAdmin, validate(idParamSchema, 'params'), asyncHandler(async (req, res) => {
+  const purchaseId = req.params.id;
+
+  await db.transaction(async (tx) => {
+    const existingPurchase = await tx
       .select()
       .from(purchases)
       .where(eq(purchases.purchase_id, purchaseId))
       .limit(1);
 
     if (!existingPurchase.length) {
-      return res.status(404).json({ error: 'Purchase not found' });
+      throw new AppError(404, 'Purchase not found.');
     }
 
     const purchase = existingPurchase[0];
-    const targetProductQuery = await db
+    const targetProductQuery = await tx
       .select()
       .from(products)
       .where(eq(products.product_id, purchase.product_id))
       .limit(1);
 
     if (!targetProductQuery.length) {
-      return res.status(404).json({ error: 'Product not found' });
+      throw new AppError(404, 'Product not found.');
     }
 
     const product = targetProductQuery[0];
+    const nextQuantity = Number(product.quantity) - Number(purchase.quantity);
+    if (nextQuantity < 0) {
+      throw new AppError(409, 'Purchase deletion would result in negative stock.');
+    }
 
-    await db
+    await tx
       .update(products)
-      .set({ quantity: product.quantity - purchase.quantity })
+      .set({ quantity: nextQuantity })
       .where(eq(products.product_id, purchase.product_id));
 
-    await db.delete(purchases).where(eq(purchases.purchase_id, purchaseId));
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
+    await tx.delete(purchases).where(eq(purchases.purchase_id, purchaseId));
+  });
+
+  res.json({ success: true });
+}));
 
 export default router;

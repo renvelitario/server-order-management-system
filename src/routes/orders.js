@@ -1,179 +1,207 @@
 import express from 'express';
 import { db } from '../db/db.js';
 import { orders, orderItems, products } from '../db/schema.js';
-import { eq } from 'drizzle-orm';
+import { asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { requireAuth } from '../middleware/auth.js';
+import { requireAdmin, requireRole } from '../middleware/rbac.js';
+import { asyncHandler, AppError } from '../utils/errors.js';
+import { validate } from '../middleware/validate.js';
+import { idParamSchema } from '../validators/common.js';
+import { orderPayloadSchema } from '../validators/entity.js';
+import { buildPaginatedResponse, parseListQuery } from '../utils/pagination.js';
 
 const router = express.Router();
 router.use(requireAuth);
 
-// Get all orders with their items
-router.get('/', async (req, res) => {
-  try {
-    const [allOrders, allOrderItems] = await Promise.all([
-      db.select().from(orders),
-      db.select().from(orderItems),
-    ]);
+router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
+  const { page, limit, offset, sort, search } = parseListQuery(req.query);
+  const sortDirection = sort === 'asc' ? asc(orders.order_id) : desc(orders.order_id);
+  const whereClause = search
+    ? sql`(${orders.order_id}::text ILIKE ${`%${search}%`} OR ${orders.customer_id}::text ILIKE ${`%${search}%`})`
+    : undefined;
 
-    const itemsByOrderId = allOrderItems.reduce((acc, item) => {
-      const key = item.order_id;
-      if (!acc.has(key)) {
-        acc.set(key, []);
-      }
-      acc.get(key).push(item);
-      return acc;
-    }, new Map());
+  console.info('[DEBUG_PAGINATION]', {
+    route: 'orders.list',
+    query: req.query,
+    parsed: { page, limit, offset, sort, search },
+  });
 
-    const ordersWithItems = allOrders.map((order) => {
-      const items = itemsByOrderId.get(order.order_id) || [];
-      const totalAmount = items.reduce((sum, item) => sum + (Number(item.quantity) * Number(item.price)), 0);
+  const [ordersPage, totalRows] = await Promise.all([
+    db
+      .select({
+        order_id: orders.order_id,
+        customer_id: orders.customer_id,
+        order_date: orders.order_date,
+      })
+      .from(orders)
+      .where(whereClause)
+      .orderBy(sortDirection)
+      .limit(limit)
+      .offset(offset),
+    db.select({ count: sql`count(*)::int` }).from(orders).where(whereClause),
+  ]);
 
-      return {
-        ...order,
-        items,
-        total_amount: totalAmount,
-      };
-    });
+  const orderIds = ordersPage.map((order) => order.order_id);
+  const pageItems = orderIds.length
+    ? await db.select().from(orderItems).where(inArray(orderItems.order_id, orderIds))
+    : [];
 
-    res.json(ordersWithItems);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
+  const itemsByOrderId = pageItems.reduce((acc, item) => {
+    const key = item.order_id;
+    if (!acc.has(key)) {
+      acc.set(key, []);
+    }
+    acc.get(key).push(item);
+    return acc;
+  }, new Map());
 
-// Get single order with items
-router.get('/:id', async (req, res) => {
-  try {
-    const order = await db.select().from(orders).where(eq(orders.order_id, parseInt(req.params.id)));
-    if (!order.length) return res.status(404).json({ error: 'Order not found' });
-    
-    const items = await db.select().from(orderItems).where(eq(orderItems.order_id, order[0].order_id));
+  const responseData = ordersPage.map((order) => {
+    const items = itemsByOrderId.get(order.order_id) || [];
     const totalAmount = items.reduce((sum, item) => sum + (Number(item.quantity) * Number(item.price)), 0);
-    
-    res.json({
-      ...order[0],
-      items: items,
-      total_amount: totalAmount
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
+
+    return {
+      ...order,
+      items,
+      total_amount: totalAmount,
+    };
+  });
+
+  res.json(buildPaginatedResponse({
+    data: responseData,
+    total: Number(totalRows[0]?.count || 0),
+    page,
+    limit,
+  }));
+}));
+
+router.get('/:id', requireRole('Admin', 'User'), validate(idParamSchema, 'params'), asyncHandler(async (req, res) => {
+  const order = await db.select().from(orders).where(eq(orders.order_id, req.params.id));
+  if (!order.length) {
+    throw new AppError(404, 'Order not found.');
   }
-});
 
-// Create order with items
-router.post('/', async (req, res) => {
-  try {
-    const { customer_id, items_data } = req.body;
+  const items = await db.select().from(orderItems).where(eq(orderItems.order_id, order[0].order_id));
+  const totalAmount = items.reduce((sum, item) => sum + (Number(item.quantity) * Number(item.price)), 0);
 
-    if (!customer_id || !items_data || !Array.isArray(items_data) || items_data.length === 0) {
-      return res.status(400).json({ error: 'customer_id and items_data array (with product_id and quantity) are required' });
-    }
+  res.json({
+    ...order[0],
+    items,
+    total_amount: totalAmount,
+  });
+}));
 
-    const productById = new Map();
+router.post('/', requireAdmin, validate(orderPayloadSchema), asyncHandler(async (req, res) => {
+  const { customer_id, items_data } = req.body;
+  const uniqueProductIds = [...new Set(items_data.map((item) => item.product_id))];
+  const quantityByProduct = items_data.reduce((acc, item) => {
+    acc.set(item.product_id, (acc.get(item.product_id) || 0) + Number(item.quantity));
+    return acc;
+  }, new Map());
 
-    // Validate all products exist and have sufficient quantity
-    for (const item of items_data) {
-      const { product_id, quantity } = item;
-      const parsedProductId = parseInt(product_id, 10);
-      const qty = parseInt(quantity, 10);
+  const result = await db.transaction(async (tx) => {
+    const productRows = await tx
+      .select({
+        product_id: products.product_id,
+        quantity: products.quantity,
+        price: products.price,
+        status: products.status,
+      })
+      .from(products)
+      .where(inArray(products.product_id, uniqueProductIds));
 
-      if (!parsedProductId || Number.isNaN(qty) || qty <= 0) {
-        return res.status(400).json({ error: 'Each item must have valid product_id and quantity > 0' });
+    const productById = new Map(productRows.map((row) => [row.product_id, row]));
+
+    for (const productId of uniqueProductIds) {
+      const product = productById.get(productId);
+      if (!product) {
+        throw new AppError(404, `Product ${productId} not found.`);
       }
 
-      const productQuery = await db.select().from(products).where(eq(products.product_id, parsedProductId));
-      if (!productQuery.length) {
-        return res.status(404).json({ error: `Product ${parsedProductId} not found` });
-      }
-
-      const product = productQuery[0];
       if (String(product.status).toLowerCase() !== 'active') {
-        return res.status(400).json({ error: `Product ${parsedProductId} is not active` });
+        throw new AppError(400, `Product ${productId} is not active.`);
       }
 
-      if (product.quantity < qty) {
-        return res.status(400).json({ error: `Insufficient quantity for product ${parsedProductId}` });
+      const requestedQty = quantityByProduct.get(productId) || 0;
+      if (Number(product.quantity) < requestedQty) {
+        throw new AppError(409, `Insufficient quantity for product ${productId}.`);
       }
-
-      productById.set(parsedProductId, product);
     }
 
-    // Create order
-    const [newOrder] = await db.insert(orders).values({
-      customer_id: parseInt(customer_id),
-      order_date: new Date()
+    const [newOrder] = await tx.insert(orders).values({
+      customer_id,
+      order_date: new Date(),
     }).returning();
 
-    // Create order items and decrement product quantities
     const createdItems = [];
+
     for (const item of items_data) {
-      const { product_id, quantity } = item;
-      const parsedProductId = parseInt(product_id, 10);
-      const qty = parseInt(quantity, 10);
-
-      const product = productById.get(parsedProductId);
-
-      // Create order item
-      const [orderItem] = await db.insert(orderItems).values({
+      const product = productById.get(item.product_id);
+      const [createdItem] = await tx.insert(orderItems).values({
         order_id: newOrder.order_id,
-        product_id: parsedProductId,
-        quantity: qty,
-        price: product.price
+        product_id: item.product_id,
+        quantity: item.quantity,
+        price: product.price,
       }).returning();
 
-      createdItems.push(orderItem);
+      createdItems.push(createdItem);
+    }
 
-      // Decrement product quantity
-      await db.update(products)
-        .set({ quantity: product.quantity - qty })
-        .where(eq(products.product_id, parsedProductId));
-
-      productById.set(parsedProductId, {
-        ...product,
-        quantity: product.quantity - qty,
-      });
+    for (const [productId, requestedQty] of quantityByProduct.entries()) {
+      const product = productById.get(productId);
+      await tx
+        .update(products)
+        .set({ quantity: Number(product.quantity) - requestedQty })
+        .where(eq(products.product_id, productId));
     }
 
     const totalAmount = createdItems.reduce((sum, item) => sum + (Number(item.quantity) * Number(item.price)), 0);
-
-    res.status(201).json({
+    return {
       ...newOrder,
       items: createdItems,
-      total_amount: totalAmount
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
+      total_amount: totalAmount,
+    };
+  });
 
-// Delete order (and its items)
-router.delete('/:id', async (req, res) => {
-  try {
-    const orderId = parseInt(req.params.id);
-    
-    // Get order items to reverse product quantities
-    const items = await db.select().from(orderItems).where(eq(orderItems.order_id, orderId));
-    
-    // Restore product quantities
-    for (const item of items) {
-      const [product] = await db.select().from(products).where(eq(products.product_id, item.product_id));
-      if (product) {
-        await db.update(products)
-          .set({ quantity: product.quantity + item.quantity })
-          .where(eq(products.product_id, item.product_id));
-      }
+  res.status(201).json(result);
+}));
+
+router.delete('/:id', requireAdmin, validate(idParamSchema, 'params'), asyncHandler(async (req, res) => {
+  const orderId = req.params.id;
+
+  await db.transaction(async (tx) => {
+    const existingOrder = await tx.select({ order_id: orders.order_id }).from(orders).where(eq(orders.order_id, orderId)).limit(1);
+    if (!existingOrder.length) {
+      throw new AppError(404, 'Order not found.');
     }
 
-    // Delete order items first (due to FK constraint)
-    await db.delete(orderItems).where(eq(orderItems.order_id, orderId));
-    
-    // Delete order
-    await db.delete(orders).where(eq(orders.order_id, orderId));
-    
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
+    const items = await tx.select().from(orderItems).where(eq(orderItems.order_id, orderId));
+    const restoreByProduct = items.reduce((acc, item) => {
+      acc.set(item.product_id, (acc.get(item.product_id) || 0) + Number(item.quantity));
+      return acc;
+    }, new Map());
+
+    const productIds = [...restoreByProduct.keys()];
+    const productRows = productIds.length
+      ? await tx.select({ product_id: products.product_id, quantity: products.quantity }).from(products).where(inArray(products.product_id, productIds))
+      : [];
+    const productById = new Map(productRows.map((row) => [row.product_id, row]));
+
+    for (const [productId, restoreQty] of restoreByProduct.entries()) {
+      const product = productById.get(productId);
+      if (!product) {
+        continue;
+      }
+
+      await tx.update(products)
+        .set({ quantity: Number(product.quantity) + restoreQty })
+        .where(eq(products.product_id, productId));
+    }
+
+    await tx.delete(orderItems).where(eq(orderItems.order_id, orderId));
+    await tx.delete(orders).where(eq(orders.order_id, orderId));
+  });
+
+  res.json({ success: true });
+}));
 
 export default router;
