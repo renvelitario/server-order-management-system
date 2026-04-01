@@ -20,6 +20,29 @@ const DELIVERY_STATUSES = {
   failed_delivery: 'failed_delivery',
 };
 
+const parseDeliveryDate = (value) => {
+  if (!value) {
+    return new Date();
+  }
+
+  const raw = String(value).trim();
+  const [year, month, day] = raw.split('-').map(Number);
+  const parsed = new Date(year, month - 1, day, 12, 0, 0, 0);
+
+  if (
+    !Number.isFinite(year)
+    || !Number.isFinite(month)
+    || !Number.isFinite(day)
+    || parsed.getFullYear() !== year
+    || (parsed.getMonth() + 1) !== month
+    || parsed.getDate() !== day
+  ) {
+    throw new AppError(400, 'Invalid delivery date. Use YYYY-MM-DD.');
+  }
+
+  return parsed;
+};
+
 const resolveTodayRange = () => {
   const now = new Date();
   const start = new Date(now);
@@ -31,7 +54,36 @@ const resolveTodayRange = () => {
   return { start, end };
 };
 
+const isTodayDeliveryDate = (value) => {
+  if (!value) {
+    return false;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return false;
+  }
+
+  const { start, end } = resolveTodayRange();
+  return date >= start && date < end;
+};
+
+const autoMarkTodayOrdersOutForDelivery = async () => {
+  const { start, end } = resolveTodayRange();
+
+  await db
+    .update(orders)
+    .set({ delivery_status: DELIVERY_STATUSES.out_for_delivery })
+    .where(and(
+      gte(orders.delivery_date, start),
+      lt(orders.delivery_date, end),
+      eq(orders.delivery_status, DELIVERY_STATUSES.pending),
+    ));
+};
+
 router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
+  await autoMarkTodayOrdersOutForDelivery();
+
   const { page, limit, offset, sort, search } = parseListQuery(req.query);
   const sortDirection = sort === 'asc' ? asc(orders.order_id) : desc(orders.order_id);
   const whereClause = search
@@ -97,6 +149,8 @@ router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
 }));
 
 router.get('/delivery/today', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
+  await autoMarkTodayOrdersOutForDelivery();
+
   const { page, limit, offset, sort, search } = parseListQuery(req.query);
   const sortDirection = sort === 'asc' ? asc(orders.order_id) : desc(orders.order_id);
   const { start, end } = resolveTodayRange();
@@ -219,6 +273,16 @@ router.post('/', requireAdmin, validate(orderPayloadSchema), asyncHandler(async 
   }, new Map());
 
   const result = await db.transaction(async (tx) => {
+    const customerRows = await tx
+      .select({ customer_id: customers.customer_id })
+      .from(customers)
+      .where(eq(customers.customer_id, customer_id))
+      .limit(1);
+
+    if (!customerRows.length) {
+      throw new AppError(404, `Customer ${customer_id} not found.`);
+    }
+
     const productRows = await tx
       .select({
         product_id: products.product_id,
@@ -247,11 +311,16 @@ router.post('/', requireAdmin, validate(orderPayloadSchema), asyncHandler(async 
       }
     }
 
+    const parsedDeliveryDate = parseDeliveryDate(delivery_date);
+    const initialDeliveryStatus = isTodayDeliveryDate(parsedDeliveryDate)
+      ? DELIVERY_STATUSES.out_for_delivery
+      : DELIVERY_STATUSES.pending;
+
     const [newOrder] = await tx.insert(orders).values({
       customer_id,
       order_date: new Date(),
-      delivery_date: delivery_date ? new Date(delivery_date) : new Date(),
-      delivery_status: DELIVERY_STATUSES.pending,
+      delivery_date: parsedDeliveryDate,
+      delivery_status: initialDeliveryStatus,
     }).returning();
 
     const createdItems = [];

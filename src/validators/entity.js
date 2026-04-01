@@ -1,6 +1,23 @@
 import { z } from 'zod';
 import { statusSchema } from './common.js';
 
+const isValidDateOnly = (value) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+
+  const [year, month, day] = value.split('-').map(Number);
+  const candidate = new Date(year, month - 1, day);
+
+  return candidate.getFullYear() === year
+    && (candidate.getMonth() + 1) === month
+    && candidate.getDate() === day;
+};
+
+const deliveryDateSchema = z.string().refine(isValidDateOnly, {
+  message: 'Invalid delivery date. Use YYYY-MM-DD.',
+});
+
 export const productPayloadSchema = z.object({
   product_name: z.string().trim().min(2).max(300),
   quantity: z.coerce.number().int().min(0),
@@ -21,7 +38,7 @@ export const purchasePayloadSchema = z.object({
 
 export const orderPayloadSchema = z.object({
   customer_id: z.coerce.number().int().positive(),
-  delivery_date: z.string().datetime().optional(),
+  delivery_date: deliveryDateSchema.optional(),
   items_data: z.array(z.object({
     product_id: z.coerce.number().int().positive(),
     quantity: z.coerce.number().int().positive(),

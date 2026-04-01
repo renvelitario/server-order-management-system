@@ -28,12 +28,21 @@ describe('orders route integration', () => {
 
     mockTransaction.mockImplementation(async (handler) => {
       let insertCallCount = 0;
+      let selectCallCount = 0;
       const tx = {
         select: vi.fn(() => ({
           from: vi.fn(() => ({
-            where: vi.fn(async () => ([
-              { product_id: 1, quantity: 20, price: 50, status: 'active' },
-            ])),
+            where: vi.fn(() => {
+              selectCallCount += 1;
+
+              if (selectCallCount === 1) {
+                return {
+                  limit: vi.fn(async () => ([{ customer_id: 2 }])),
+                };
+              }
+
+              return Promise.resolve([{ product_id: 1, quantity: 20, price: 50, status: 'active' }]);
+            }),
           })),
         })),
         insert: vi.fn(() => ({
