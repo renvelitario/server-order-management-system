@@ -1,12 +1,12 @@
 import { supabaseAdmin } from '../db/db.js';
 import { db } from '../db/db.js';
 import { users } from '../db/schema.js';
-import { eq } from 'drizzle-orm';
+import { eq, or } from 'drizzle-orm';
 
 const ACTIVE_STATUS = 'active';
 
 const findLocalUser = async (authUser) => {
-  const bySupabaseId = await db
+  const byIdentity = await db
     .select({
       user_id: users.user_id,
       email: users.email,
@@ -17,28 +17,13 @@ const findLocalUser = async (authUser) => {
       supabase_id: users.supabase_id,
     })
     .from(users)
-    .where(eq(users.supabase_id, authUser.id))
+    .where(or(
+      eq(users.supabase_id, authUser.id),
+      eq(users.email, authUser.email),
+    ))
     .limit(1);
 
-  if (bySupabaseId.length) {
-    return bySupabaseId[0];
-  }
-
-  const byEmail = await db
-    .select({
-      user_id: users.user_id,
-      email: users.email,
-      username: users.username,
-      acc_type: users.acc_type,
-      status: users.status,
-      inactivity_timeout_minutes: users.inactivity_timeout_minutes,
-      supabase_id: users.supabase_id,
-    })
-    .from(users)
-    .where(eq(users.email, authUser.email))
-    .limit(1);
-
-  return byEmail[0] || null;
+  return byIdentity[0] || null;
 };
 
 export const requireAuth = async (req, res, next) => {

@@ -13,6 +13,8 @@ import { buildPaginatedResponse, parseListQuery } from '../utils/pagination.js';
 const router = express.Router();
 router.use(requireAuth);
 
+const isDevelopment = process.env.NODE_ENV !== 'production';
+
 const DELIVERY_STATUSES = {
   pending: 'pending',
   out_for_delivery: 'out_for_delivery',
@@ -90,11 +92,13 @@ router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
     ? sql`(${orders.order_id}::text ILIKE ${`%${search}%`} OR ${orders.customer_id}::text ILIKE ${`%${search}%`})`
     : undefined;
 
-  console.info('[DEBUG_PAGINATION]', {
-    route: 'orders.list',
-    query: req.query,
-    parsed: { page, limit, offset, sort, search },
-  });
+  if (isDevelopment) {
+    console.info('[DEBUG_PAGINATION]', {
+      route: 'orders.list',
+      query: req.query,
+      parsed: { page, limit, offset, sort, search },
+    });
+  }
 
   const [ordersPage, totalRows] = await Promise.all([
     db
