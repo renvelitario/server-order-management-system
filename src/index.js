@@ -18,9 +18,26 @@ const allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173')
   .map((origin) => origin.trim())
   .filter(Boolean);
 
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const matchesAllowedOrigin = (origin) => {
+  return allowedOrigins.some((allowedOrigin) => {
+    if (allowedOrigin === origin) {
+      return true;
+    }
+
+    if (!allowedOrigin.includes('*')) {
+      return false;
+    }
+
+    const wildcardPattern = `^${escapeRegex(allowedOrigin).replace(/\\\*/g, '.*')}$`;
+    return new RegExp(wildcardPattern).test(origin);
+  });
+};
+
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (!origin || matchesAllowedOrigin(origin)) {
       callback(null, true);
       return;
     }
