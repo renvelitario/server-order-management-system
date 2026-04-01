@@ -40,12 +40,21 @@ export const customers = pgTable('ims_customers', {
 export const orders = pgTable('ims_orders', {
 	order_id: serial('order_id').primaryKey(),
 	customer_id: integer('customer_id').notNull(),
-	order_date: timestamp('order_date').defaultNow().notNull()
+	order_date: timestamp('order_date').defaultNow().notNull(),
+	delivery_date: timestamp('delivery_date').defaultNow().notNull(),
+	delivery_status: varchar('delivery_status', { length: 50 }).notNull().default('pending'),
+	delivered_at: timestamp('delivered_at'),
+	delivered_by: integer('delivered_by')
 }, (table) => ({
 	customerIdFk: foreignKey({
 		columns: [table.customer_id],
 		foreignColumns: [customers.customer_id]
-	})
+	}),
+	deliveredByFk: foreignKey({
+		columns: [table.delivered_by],
+		foreignColumns: [users.user_id]
+	}),
+	ordersDeliveryStatusCheck: check('ims_orders_delivery_status_check', sql`${table.delivery_status} IN ('pending', 'out_for_delivery', 'delivered', 'failed_delivery')`)
 }));
 
 export const orderItems = pgTable('ims_order_items', {

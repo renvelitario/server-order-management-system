@@ -21,10 +21,17 @@ export const purchasePayloadSchema = z.object({
 
 export const orderPayloadSchema = z.object({
   customer_id: z.coerce.number().int().positive(),
+  delivery_date: z.string().datetime().optional(),
   items_data: z.array(z.object({
     product_id: z.coerce.number().int().positive(),
     quantity: z.coerce.number().int().positive(),
   })).min(1),
+});
+
+export const deliveryStatusSchema = z.enum(['pending', 'out_for_delivery', 'delivered', 'failed_delivery']);
+
+export const updateDeliveryStatusSchema = z.object({
+  delivery_status: deliveryStatusSchema,
 });
 
 export const dashboardQuerySchema = z.object({
