@@ -22,6 +22,9 @@ const DELIVERY_STATUSES = {
   failed_delivery: 'failed_delivery',
 };
 
+const MS_PER_MINUTE = 60 * 1000;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
 const parseDeliveryDate = (value) => {
   if (!value) {
     return new Date();
@@ -45,18 +48,44 @@ const parseDeliveryDate = (value) => {
   return parsed;
 };
 
-const resolveTodayRange = () => {
-  const now = new Date();
-  const start = new Date(now);
-  start.setHours(0, 0, 0, 0);
+const resolveTodayRange = (utcOffsetMinutes = null) => {
+  if (!Number.isFinite(utcOffsetMinutes)) {
+    const now = new Date();
+    const start = new Date(now);
+    start.setHours(0, 0, 0, 0);
 
-  const end = new Date(start);
-  end.setDate(end.getDate() + 1);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+
+    return { start, end };
+  }
+
+  const offsetMs = utcOffsetMinutes * MS_PER_MINUTE;
+  const nowUtcMs = Date.now();
+  const localNowMs = nowUtcMs - offsetMs;
+  const localDayStartMs = Math.floor(localNowMs / MS_PER_DAY) * MS_PER_DAY;
+
+  const start = new Date(localDayStartMs + offsetMs);
+  const end = new Date(localDayStartMs + MS_PER_DAY + offsetMs);
 
   return { start, end };
 };
 
-const isTodayDeliveryDate = (value) => {
+const parseClientUtcOffsetMinutes = (req) => {
+  const raw = req.get('x-client-utc-offset-minutes');
+  if (raw == null || raw === '') {
+    return null;
+  }
+
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+
+  return parsed;
+};
+
+const isTodayDeliveryDate = (value, utcOffsetMinutes = null) => {
   if (!value) {
     return false;
   }
@@ -66,12 +95,12 @@ const isTodayDeliveryDate = (value) => {
     return false;
   }
 
-  const { start, end } = resolveTodayRange();
+  const { start, end } = resolveTodayRange(utcOffsetMinutes);
   return date >= start && date < end;
 };
 
-const autoMarkTodayOrdersOutForDelivery = async () => {
-  const { start, end } = resolveTodayRange();
+const autoMarkTodayOrdersOutForDelivery = async (utcOffsetMinutes = null) => {
+  const { start, end } = resolveTodayRange(utcOffsetMinutes);
 
   await db
     .update(orders)
@@ -84,7 +113,8 @@ const autoMarkTodayOrdersOutForDelivery = async () => {
 };
 
 router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
-  await autoMarkTodayOrdersOutForDelivery();
+  const utcOffsetMinutes = parseClientUtcOffsetMinutes(req);
+  await autoMarkTodayOrdersOutForDelivery(utcOffsetMinutes);
 
   const { page, limit, offset, sort, search } = parseListQuery(req.query);
   const sortDirection = sort === 'asc' ? asc(orders.order_id) : desc(orders.order_id);
@@ -153,11 +183,12 @@ router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
 }));
 
 router.get('/delivery/today', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
-  await autoMarkTodayOrdersOutForDelivery();
+  const utcOffsetMinutes = parseClientUtcOffsetMinutes(req);
+  await autoMarkTodayOrdersOutForDelivery(utcOffsetMinutes);
 
   const { page, limit, offset, sort, search } = parseListQuery(req.query);
   const sortDirection = sort === 'asc' ? asc(orders.order_id) : desc(orders.order_id);
-  const { start, end } = resolveTodayRange();
+  const { start, end } = resolveTodayRange(utcOffsetMinutes);
   const filters = [
     gte(orders.delivery_date, start),
     lt(orders.delivery_date, end),
@@ -270,6 +301,7 @@ router.get('/:id', requireRole('Admin', 'User'), validate(idParamSchema, 'params
 
 router.post('/', requireAdmin, validate(orderPayloadSchema), asyncHandler(async (req, res) => {
   const { customer_id, items_data, delivery_date } = req.body;
+  const utcOffsetMinutes = parseClientUtcOffsetMinutes(req);
   const uniqueProductIds = [...new Set(items_data.map((item) => item.product_id))];
   const quantityByProduct = items_data.reduce((acc, item) => {
     acc.set(item.product_id, (acc.get(item.product_id) || 0) + Number(item.quantity));
@@ -316,7 +348,7 @@ router.post('/', requireAdmin, validate(orderPayloadSchema), asyncHandler(async 
     }
 
     const parsedDeliveryDate = parseDeliveryDate(delivery_date);
-    const initialDeliveryStatus = isTodayDeliveryDate(parsedDeliveryDate)
+    const initialDeliveryStatus = isTodayDeliveryDate(parsedDeliveryDate, utcOffsetMinutes)
       ? DELIVERY_STATUSES.out_for_delivery
       : DELIVERY_STATUSES.pending;
 
