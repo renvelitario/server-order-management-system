@@ -1,6 +1,10 @@
+import type { RequestHandler } from 'express';
+import type { ZodTypeAny } from 'zod';
 import { AppError } from '../utils/errors.js';
 
-export const validate = (schema, target = 'body') => (req, res, next) => {
+type ValidationTarget = 'body' | 'params' | 'query';
+
+export const validate = (schema: ZodTypeAny, target: ValidationTarget = 'body'): RequestHandler => (req, _res, next) => {
   const payload = req[target];
   const result = schema.safeParse(payload);
 

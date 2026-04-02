@@ -182,7 +182,7 @@ router.post('/change-password', requireAuth, validate(changePasswordSchema), asy
 }));
 
 router.patch('/users/:id', requireAuth, requireAdmin, validate(idParamSchema, 'params'), validate(updateUserByAdminSchema), asyncHandler(async (req, res) => {
-  const userId = req.params.id;
+  const userId = Number(req.params.id);
 
   const [updatedUser] = await db.update(users)
     .set(req.body)

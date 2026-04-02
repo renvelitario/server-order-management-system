@@ -76,7 +76,7 @@ router.post('/', requireAdmin, validate(purchasePayloadSchema), asyncHandler(asy
 }));
 
 router.delete('/:id', requireAdmin, validate(idParamSchema, 'params'), asyncHandler(async (req, res) => {
-  const purchaseId = req.params.id;
+  const purchaseId = Number(req.params.id);
 
   await db.transaction(async (tx) => {
     const existingPurchase = await tx

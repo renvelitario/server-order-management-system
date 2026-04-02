@@ -1,11 +1,13 @@
+import type { NextFunction, Request, Response } from 'express';
 import { supabaseAdmin } from '../db/db.js';
 import { db } from '../db/db.js';
 import { users } from '../db/schema.js';
 import { eq, or } from 'drizzle-orm';
+import type { AuthUser, LocalUser } from '../types/auth.js';
 
 const ACTIVE_STATUS = 'active';
 
-const findLocalUser = async (authUser) => {
+const findLocalUser = async (authUser: AuthUser): Promise<LocalUser | null> => {
   const byIdentity = await db
     .select({
       user_id: users.user_id,
@@ -26,7 +28,7 @@ const findLocalUser = async (authUser) => {
   return byIdentity[0] || null;
 };
 
-export const requireAuth = async (req, res, next) => {
+export const requireAuth = async (req: Request, res: Response, next: NextFunction): Promise<void | Response> => {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader) {
@@ -58,6 +60,6 @@ export const requireAuth = async (req, res, next) => {
     next();
   } catch (err) {
     console.error('[AUTH_ERROR]', err);
-    res.status(500).json({ error: 'Internal server error.' });
+    return res.status(500).json({ error: 'Internal server error.' });
   }
 };

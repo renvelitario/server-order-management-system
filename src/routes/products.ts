@@ -52,7 +52,8 @@ router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
 }));
 
 router.get('/:id', requireRole('Admin', 'User'), validate(idParamSchema, 'params'), asyncHandler(async (req, res) => {
-  const product = await db.select().from(products).where(eq(products.product_id, req.params.id));
+  const productId = Number(req.params.id);
+  const product = await db.select().from(products).where(eq(products.product_id, productId));
   if (!product.length) {
     throw new AppError(404, 'Product not found.');
   }
@@ -66,7 +67,8 @@ router.post('/', requireAdmin, validate(productPayloadSchema), asyncHandler(asyn
 }));
 
 router.put('/:id', requireAdmin, validate(idParamSchema, 'params'), validate(productPayloadSchema), asyncHandler(async (req, res) => {
-  const [updatedProduct] = await db.update(products).set(req.body).where(eq(products.product_id, req.params.id)).returning();
+  const productId = Number(req.params.id);
+  const [updatedProduct] = await db.update(products).set(req.body).where(eq(products.product_id, productId)).returning();
 
   if (!updatedProduct) {
     throw new AppError(404, 'Product not found.');
@@ -76,7 +78,7 @@ router.put('/:id', requireAdmin, validate(idParamSchema, 'params'), validate(pro
 }));
 
 router.delete('/:id', requireAdmin, validate(idParamSchema, 'params'), asyncHandler(async (req, res) => {
-  const productId = req.params.id;
+  const productId = Number(req.params.id);
 
   const [inOrderItems, inPurchases] = await Promise.all([
     db.select({ order_item_id: orderItems.order_item_id }).from(orderItems).where(eq(orderItems.product_id, productId)).limit(1),

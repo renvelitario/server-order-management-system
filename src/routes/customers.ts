@@ -51,7 +51,8 @@ router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
 }));
 
 router.get('/:id', requireRole('Admin', 'User'), validate(idParamSchema, 'params'), asyncHandler(async (req, res) => {
-  const customer = await db.select().from(customers).where(eq(customers.customer_id, req.params.id));
+  const customerId = Number(req.params.id);
+  const customer = await db.select().from(customers).where(eq(customers.customer_id, customerId));
   if (!customer.length) {
     throw new AppError(404, 'Customer not found.');
   }
@@ -65,7 +66,8 @@ router.post('/', requireAdmin, validate(customerPayloadSchema), asyncHandler(asy
 }));
 
 router.put('/:id', requireAdmin, validate(idParamSchema, 'params'), validate(customerPayloadSchema), asyncHandler(async (req, res) => {
-  const [updatedCustomer] = await db.update(customers).set(req.body).where(eq(customers.customer_id, req.params.id)).returning();
+  const customerId = Number(req.params.id);
+  const [updatedCustomer] = await db.update(customers).set(req.body).where(eq(customers.customer_id, customerId)).returning();
 
   if (!updatedCustomer) {
     throw new AppError(404, 'Customer not found.');
@@ -75,7 +77,7 @@ router.put('/:id', requireAdmin, validate(idParamSchema, 'params'), validate(cus
 }));
 
 router.delete('/:id', requireAdmin, validate(idParamSchema, 'params'), asyncHandler(async (req, res) => {
-  const customerId = req.params.id;
+  const customerId = Number(req.params.id);
   const customerOrders = await db.select({ order_id: orders.order_id }).from(orders).where(eq(orders.customer_id, customerId)).limit(1);
   if (customerOrders.length > 0) {
     throw new AppError(409, 'This record cannot be deleted because it is used in other records.');

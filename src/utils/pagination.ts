@@ -1,10 +1,21 @@
+import type { ParsedQs } from 'qs';
+import type { PaginatedResult } from '../types/http.js';
+
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 50;
 const DEFAULT_SORT = 'desc';
+type SortDirection = 'asc' | 'desc';
 
-const toPositiveIntOrFallback = (value, fallback) => {
-  const parsed = Number.parseInt(value, 10);
+type ListQueryInput = ParsedQs & {
+  page?: string | number;
+  limit?: string | number;
+  sort?: string;
+  search?: string;
+};
+
+const toPositiveIntOrFallback = (value: unknown, fallback: number): number => {
+  const parsed = Number.parseInt(String(value), 10);
   if (!Number.isFinite(parsed) || parsed < 1) {
     return fallback;
   }
@@ -12,7 +23,7 @@ const toPositiveIntOrFallback = (value, fallback) => {
   return parsed;
 };
 
-export const parsePagination = (query) => {
+export const parsePagination = (query: ListQueryInput): { page: number; limit: number; offset: number } => {
   const safePage = toPositiveIntOrFallback(query.page, DEFAULT_PAGE);
   const rawLimit = toPositiveIntOrFallback(query.limit, DEFAULT_LIMIT);
   const safeLimit = Math.min(rawLimit, MAX_LIMIT);
@@ -25,7 +36,7 @@ export const parsePagination = (query) => {
   };
 };
 
-export const parseSortDirection = (value) => {
+export const parseSortDirection = (value: unknown): SortDirection => {
   const normalized = String(value || '').toLowerCase();
   if (normalized === 'asc' || normalized === 'desc') {
     return normalized;
@@ -34,7 +45,7 @@ export const parseSortDirection = (value) => {
   return DEFAULT_SORT;
 };
 
-export const parseListQuery = (query) => {
+export const parseListQuery = (query: ListQueryInput): { page: number; limit: number; offset: number; sort: SortDirection; search?: string } => {
   const { page, limit, offset } = parsePagination(query);
   const sort = parseSortDirection(query.sort);
   const search = typeof query.search === 'string' ? query.search.trim().slice(0, 120) : undefined;
@@ -48,7 +59,7 @@ export const parseListQuery = (query) => {
   };
 };
 
-export const buildPaginatedResponse = ({ data, total, page, limit }) => ({
+export const buildPaginatedResponse = <T>({ data, total, page, limit }: { data: T[]; total: number; page: number; limit: number }): PaginatedResult<T> => ({
   data,
   pagination: {
     page,

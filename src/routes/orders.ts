@@ -25,6 +25,12 @@ const DELIVERY_STATUSES = {
 const MS_PER_MINUTE = 60 * 1000;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
+type OrderPayload = {
+  customer_id: number;
+  delivery_date?: string;
+  items_data: Array<{ product_id: number; quantity: number }>;
+};
+
 const parseDeliveryDate = (value) => {
   if (!value) {
     return new Date();
@@ -267,6 +273,7 @@ router.get('/delivery/today', requireRole('Admin', 'User'), asyncHandler(async (
 }));
 
 router.get('/:id', requireRole('Admin', 'User'), validate(idParamSchema, 'params'), asyncHandler(async (req, res) => {
+  const orderId = Number(req.params.id);
   const order = await db
     .select({
       order_id: orders.order_id,
@@ -282,7 +289,7 @@ router.get('/:id', requireRole('Admin', 'User'), validate(idParamSchema, 'params
     })
     .from(orders)
     .leftJoin(customers, eq(orders.customer_id, customers.customer_id))
-    .where(eq(orders.order_id, req.params.id))
+    .where(eq(orders.order_id, orderId))
     .limit(1);
 
   if (!order.length) {
@@ -300,9 +307,9 @@ router.get('/:id', requireRole('Admin', 'User'), validate(idParamSchema, 'params
 }));
 
 router.post('/', requireAdmin, validate(orderPayloadSchema), asyncHandler(async (req, res) => {
-  const { customer_id, items_data, delivery_date } = req.body;
+  const { customer_id, items_data, delivery_date } = req.body as OrderPayload;
   const utcOffsetMinutes = parseClientUtcOffsetMinutes(req);
-  const uniqueProductIds = [...new Set(items_data.map((item) => item.product_id))];
+  const uniqueProductIds: number[] = [...new Set(items_data.map((item) => item.product_id))];
   const quantityByProduct = items_data.reduce((acc, item) => {
     acc.set(item.product_id, (acc.get(item.product_id) || 0) + Number(item.quantity));
     return acc;
@@ -393,6 +400,7 @@ router.post('/', requireAdmin, validate(orderPayloadSchema), asyncHandler(async 
 }));
 
 router.patch('/:id/delivery-status', requireRole('Admin', 'User'), validate(idParamSchema, 'params'), validate(updateDeliveryStatusSchema), asyncHandler(async (req, res) => {
+  const orderId = Number(req.params.id);
   const { delivery_status } = req.body;
 
   const updates = {
@@ -409,7 +417,7 @@ router.patch('/:id/delivery-status', requireRole('Admin', 'User'), validate(idPa
   const [updatedOrder] = await db
     .update(orders)
     .set(updates)
-    .where(eq(orders.order_id, req.params.id))
+    .where(eq(orders.order_id, orderId))
     .returning({
       order_id: orders.order_id,
       customer_id: orders.customer_id,
@@ -428,7 +436,7 @@ router.patch('/:id/delivery-status', requireRole('Admin', 'User'), validate(idPa
 }));
 
 router.delete('/:id', requireAdmin, validate(idParamSchema, 'params'), asyncHandler(async (req, res) => {
-  const orderId = req.params.id;
+  const orderId = Number(req.params.id);
 
   await db.transaction(async (tx) => {
     const existingOrder = await tx.select({ order_id: orders.order_id }).from(orders).where(eq(orders.order_id, orderId)).limit(1);

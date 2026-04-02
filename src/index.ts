@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import type { CorsOptions } from 'cors';
 import 'dotenv/config';
 
 import authRoutes from './routes/auth.js';
@@ -18,9 +19,9 @@ const allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173')
   .map((origin) => origin.trim())
   .filter(Boolean);
 
-const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-const matchesAllowedOrigin = (origin) => {
+const matchesAllowedOrigin = (origin: string): boolean => {
   return allowedOrigins.some((allowedOrigin) => {
     if (allowedOrigin === origin) {
       return true;
@@ -35,7 +36,7 @@ const matchesAllowedOrigin = (origin) => {
   });
 };
 
-app.use(cors({
+const corsOptions: CorsOptions = {
   origin: (origin, callback) => {
     if (!origin || matchesAllowedOrigin(origin)) {
       callback(null, true);
@@ -45,7 +46,9 @@ app.use(cors({
     callback(new Error('CORS origin denied'));
   },
   credentials: true,
-}));
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 
 app.use('/api/auth', authRoutes);
@@ -62,7 +65,7 @@ app.get('/', (req, res) => {
 
 app.use(errorHandler);
 
-const PORT = process.env.PORT || 5000;
+const PORT = Number(process.env.PORT) || 5000;
 
 if (process.env.NODE_ENV !== 'test') {
   app.listen(PORT, () => {
