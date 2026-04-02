@@ -20,11 +20,13 @@ export const users = pgTable('ims_users', {
 
 export const products = pgTable('ims_products', {
 	product_id: serial('product_id').primaryKey(),
+	sku: varchar('sku', { length: 32 }).notNull(),
 	product_name: varchar('product_name', { length: 300 }).notNull(),
 	quantity: integer('quantity').notNull(),
 	price: doublePrecision('price').notNull(),
 	status: varchar('status', { length: 50 }).notNull().default('active') // 'active' or 'inactive'
 }, (table) => ({
+	productsSkuUnique: uniqueIndex('ims_products_sku_unique').on(table.sku),
 	productsQuantityCheck: check('ims_products_quantity_check', sql`${table.quantity} >= 0`),
 	productsPriceCheck: check('ims_products_price_check', sql`${table.price} >= 0`),
 	productsStatusCheck: check('ims_products_status_check', sql`${table.status} IN ('active', 'inactive')`)
