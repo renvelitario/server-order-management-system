@@ -7,7 +7,8 @@ import authRoutes from './routes/auth.js';
 import productsRoutes from './routes/products.js';
 import customersRoutes from './routes/customers.js';
 import ordersRoutes from './routes/orders.js';
-import purchasesRoutes from './routes/purchases.js';
+// Archived Purchases frontend: keep backend route file for future restore, but disable API mount.
+// import purchasesRoutes from './routes/purchases.js';
 import usersRoutes from './routes/users.js';
 import dashboardRoutes from './routes/dashboard.js';
 import { errorHandler } from './utils/errors.js';
@@ -55,7 +56,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/products', productsRoutes);
 app.use('/api/customers', customersRoutes);
 app.use('/api/orders', ordersRoutes);
-app.use('/api/purchases', purchasesRoutes);
+// Archived Purchases frontend: API disabled from active app surface.
+// app.use('/api/purchases', purchasesRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 

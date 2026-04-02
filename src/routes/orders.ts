@@ -398,6 +398,151 @@ router.post('/', requireAdmin, validate(orderPayloadSchema), asyncHandler(async 
   res.status(201).json(result);
 }));
 
+router.put('/:id', requireAdmin, validate(idParamSchema, 'params'), validate(orderPayloadSchema), asyncHandler(async (req, res) => {
+  const orderId = Number(req.params.id);
+  const { customer_id, items_data, delivery_date } = req.body as OrderPayload;
+  const uniqueProductIds: number[] = [...new Set(items_data.map((item) => item.product_id))];
+  const requestedByProduct = items_data.reduce((acc, item) => {
+    acc.set(item.product_id, (acc.get(item.product_id) || 0) + Number(item.quantity));
+    return acc;
+  }, new Map<number, number>());
+
+  const result = await db.transaction(async (tx) => {
+    const existingOrderRows = await tx
+      .select({
+        order_id: orders.order_id,
+        order_date: orders.order_date,
+        delivery_status: orders.delivery_status,
+        delivered_at: orders.delivered_at,
+        delivered_by: orders.delivered_by,
+      })
+      .from(orders)
+      .where(eq(orders.order_id, orderId))
+      .limit(1);
+
+    if (!existingOrderRows.length) {
+      throw new AppError(404, 'Order not found.');
+    }
+
+    const customerRows = await tx
+      .select({ customer_id: customers.customer_id })
+      .from(customers)
+      .where(eq(customers.customer_id, customer_id))
+      .limit(1);
+
+    if (!customerRows.length) {
+      throw new AppError(404, `Customer ${customer_id} not found.`);
+    }
+
+    const existingItems = await tx
+      .select({ product_id: orderItems.product_id, quantity: orderItems.quantity })
+      .from(orderItems)
+      .where(eq(orderItems.order_id, orderId));
+
+    const restoreByProduct = existingItems.reduce((acc, item) => {
+      acc.set(item.product_id, (acc.get(item.product_id) || 0) + Number(item.quantity));
+      return acc;
+    }, new Map<number, number>());
+
+    const allProductIds = [...new Set([...restoreByProduct.keys(), ...uniqueProductIds])];
+    const productRows = allProductIds.length
+      ? await tx
+          .select({
+            product_id: products.product_id,
+            quantity: products.quantity,
+            price: products.price,
+            status: products.status,
+          })
+          .from(products)
+          .where(inArray(products.product_id, allProductIds))
+      : [];
+
+    const productById = new Map(productRows.map((row) => [row.product_id, row]));
+    const effectiveQuantityByProduct = new Map<number, number>();
+
+    for (const productId of allProductIds) {
+      const product = productById.get(productId);
+      if (!product) {
+        throw new AppError(404, `Product ${productId} not found.`);
+      }
+
+      const restored = restoreByProduct.get(productId) || 0;
+      effectiveQuantityByProduct.set(productId, Number(product.quantity) + restored);
+    }
+
+    for (const productId of uniqueProductIds) {
+      const product = productById.get(productId);
+      if (!product) {
+        throw new AppError(404, `Product ${productId} not found.`);
+      }
+
+      if (String(product.status).toLowerCase() !== 'active') {
+        throw new AppError(400, `Product ${productId} is not active.`);
+      }
+
+      const requestedQty = requestedByProduct.get(productId) || 0;
+      const availableQty = effectiveQuantityByProduct.get(productId) || 0;
+
+      if (availableQty < requestedQty) {
+        throw new AppError(409, `Insufficient quantity for product ${productId}.`);
+      }
+
+      effectiveQuantityByProduct.set(productId, availableQty - requestedQty);
+    }
+
+    const parsedDeliveryDate = parseDeliveryDate(delivery_date);
+
+    const [updatedOrder] = await tx
+      .update(orders)
+      .set({ customer_id, delivery_date: parsedDeliveryDate })
+      .where(eq(orders.order_id, orderId))
+      .returning({
+        order_id: orders.order_id,
+        customer_id: orders.customer_id,
+        order_date: orders.order_date,
+        delivery_date: orders.delivery_date,
+        delivery_status: orders.delivery_status,
+        delivered_at: orders.delivered_at,
+        delivered_by: orders.delivered_by,
+      });
+
+    await tx.delete(orderItems).where(eq(orderItems.order_id, orderId));
+
+    const updatedItems = [];
+    for (const item of items_data) {
+      const product = productById.get(item.product_id);
+      const [createdItem] = await tx
+        .insert(orderItems)
+        .values({
+          order_id: orderId,
+          product_id: item.product_id,
+          quantity: item.quantity,
+          price: product?.price,
+        })
+        .returning();
+
+      updatedItems.push(createdItem);
+    }
+
+    for (const [productId, nextQty] of effectiveQuantityByProduct.entries()) {
+      await tx
+        .update(products)
+        .set({ quantity: nextQty })
+        .where(eq(products.product_id, productId));
+    }
+
+    const totalAmount = updatedItems.reduce((sum, item) => sum + (Number(item.quantity) * Number(item.price)), 0);
+
+    return {
+      ...updatedOrder,
+      items: updatedItems,
+      total_amount: totalAmount,
+    };
+  });
+
+  res.json(result);
+}));
+
 router.patch('/:id/delivery-status', requireRole('Admin', 'User'), validate(idParamSchema, 'params'), validate(updateDeliveryStatusSchema), asyncHandler(async (req, res) => {
   const orderId = Number(req.params.id);
   const { delivery_status } = req.body;
