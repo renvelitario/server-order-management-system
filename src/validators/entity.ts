@@ -27,9 +27,9 @@ export const productPayloadSchema = z.object({
 });
 
 export const customerPayloadSchema = z.object({
-  name: z.string().trim().min(2).max(200),
-  address: z.string().trim().min(3).max(500),
-  contact_no: z.string().trim().min(7).max(20),
+  name: z.string().trim().min(2, 'Customer name must be at least 2 characters.').max(200, 'Customer name must be at most 200 characters.'),
+  address: z.string().trim().min(3, 'Address must be at least 3 characters.').max(500, 'Address must be at most 500 characters.'),
+  contact_no: z.string().trim().min(7, 'Contact number must be at least 7 characters.').max(20, 'Contact number must be at most 20 characters.'),
 });
 
 export const purchasePayloadSchema = z.object({
