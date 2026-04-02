@@ -8,7 +8,7 @@ import { asyncHandler, AppError } from '../utils/errors.js';
 import { validate } from '../middleware/validate.js';
 import { idParamSchema } from '../validators/common.js';
 import { purchasePayloadSchema } from '../validators/entity.js';
-import { buildPaginatedResponse, parseListQuery } from '../utils/pagination.js';
+import { buildPaginatedResponse, logPaginationDebug, parseListQuery } from '../utils/pagination.js';
 
 const router = express.Router();
 router.use(requireAuth);
@@ -20,7 +20,7 @@ router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
     ? sql`(${purchases.purchase_id}::text ILIKE ${`%${search}%`} OR ${purchases.product_id}::text ILIKE ${`%${search}%`})`
     : undefined;
 
-  console.info('[DEBUG_PAGINATION]', {
+  logPaginationDebug({
     route: 'purchases.list',
     query: req.query,
     parsed: { page, limit, offset, sort, search },

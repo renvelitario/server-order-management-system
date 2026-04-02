@@ -8,7 +8,7 @@ import { asyncHandler, AppError } from '../utils/errors.js';
 import { validate } from '../middleware/validate.js';
 import { customerPayloadSchema } from '../validators/entity.js';
 import { idParamSchema } from '../validators/common.js';
-import { buildPaginatedResponse, parseListQuery } from '../utils/pagination.js';
+import { buildPaginatedResponse, logPaginationDebug, parseListQuery } from '../utils/pagination.js';
 
 const router = express.Router();
 router.use(requireAuth);
@@ -20,7 +20,7 @@ router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
     ? ilike(customers.name, `%${search}%`)
     : undefined;
 
-  console.info('[DEBUG_PAGINATION]', {
+  logPaginationDebug({
     route: 'customers.list',
     query: req.query,
     parsed: { page, limit, offset, sort, search },

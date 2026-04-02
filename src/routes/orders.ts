@@ -8,7 +8,7 @@ import { asyncHandler, AppError } from '../utils/errors.js';
 import { validate } from '../middleware/validate.js';
 import { idParamSchema } from '../validators/common.js';
 import { orderPayloadSchema, updateDeliveryStatusSchema } from '../validators/entity.js';
-import { buildPaginatedResponse, parseListQuery } from '../utils/pagination.js';
+import { buildPaginatedResponse, logPaginationDebug, parseListQuery } from '../utils/pagination.js';
 
 const router = express.Router();
 router.use(requireAuth);
@@ -128,13 +128,12 @@ router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
     ? sql`(${orders.order_id}::text ILIKE ${`%${search}%`} OR ${orders.customer_id}::text ILIKE ${`%${search}%`})`
     : undefined;
 
-  if (isDevelopment) {
-    console.info('[DEBUG_PAGINATION]', {
-      route: 'orders.list',
-      query: req.query,
-      parsed: { page, limit, offset, sort, search },
-    });
-  }
+  logPaginationDebug({
+    route: 'orders.list',
+    query: req.query,
+    parsed: { page, limit, offset, sort, search },
+    enabled: isDevelopment,
+  });
 
   const [ordersPage, totalRows] = await Promise.all([
     db

@@ -59,6 +59,28 @@ export const parseListQuery = (query: ListQueryInput): { page: number; limit: nu
   };
 };
 
+export const logPaginationDebug = ({
+  route,
+  query,
+  parsed,
+  enabled = true,
+}: {
+  route: string;
+  query: unknown;
+  parsed: { page: number; limit: number; offset: number; sort: SortDirection; search?: string };
+  enabled?: boolean;
+}) => {
+  if (!enabled) {
+    return;
+  }
+
+  console.info('[DEBUG_PAGINATION]', {
+    route,
+    query,
+    parsed,
+  });
+};
+
 export const buildPaginatedResponse = <T>({ data, total, page, limit }: { data: T[]; total: number; page: number; limit: number }): PaginatedResult<T> => ({
   data,
   pagination: {

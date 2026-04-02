@@ -5,7 +5,7 @@ import { asc, desc, ilike, sql } from 'drizzle-orm';
 import { requireAuth } from '../middleware/auth.js';
 import { requireAdmin } from '../middleware/rbac.js';
 import { asyncHandler } from '../utils/errors.js';
-import { buildPaginatedResponse, parseListQuery } from '../utils/pagination.js';
+import { buildPaginatedResponse, logPaginationDebug, parseListQuery } from '../utils/pagination.js';
 
 const router = express.Router();
 router.use(requireAuth);
@@ -18,7 +18,7 @@ router.get('/', asyncHandler(async (req, res) => {
     ? ilike(users.username, `%${search}%`)
     : undefined;
 
-  console.info('[DEBUG_PAGINATION]', {
+  logPaginationDebug({
     route: 'users.list',
     query: req.query,
     parsed: { page, limit, offset, sort, search },
