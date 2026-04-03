@@ -533,29 +533,6 @@ router.delete('/:id', requireAdmin, validate(idParamSchema, 'params'), asyncHand
       throw new AppError(404, 'Order not found.');
     }
 
-    const items = await tx.select().from(orderItems).where(eq(orderItems.order_id, orderId));
-    const restoreByProduct = items.reduce((acc, item) => {
-      acc.set(item.product_id, (acc.get(item.product_id) || 0) + Number(item.quantity));
-      return acc;
-    }, new Map());
-
-    const productIds = [...restoreByProduct.keys()];
-    const productRows = productIds.length
-      ? await tx.select({ product_id: products.product_id, quantity: products.quantity }).from(products).where(inArray(products.product_id, productIds))
-      : [];
-    const productById = new Map(productRows.map((row) => [row.product_id, row]));
-
-    for (const [productId, restoreQty] of restoreByProduct.entries()) {
-      const product = productById.get(productId);
-      if (!product) {
-        continue;
-      }
-
-      await tx.update(products)
-        .set({ quantity: Number(product.quantity) + restoreQty })
-        .where(eq(products.product_id, productId));
-    }
-
     await tx.delete(orderItems).where(eq(orderItems.order_id, orderId));
     await tx.delete(orders).where(eq(orders.order_id, orderId));
   });

@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, timestamp, doublePrecision, varchar, foreignKey, uniqueIndex, check } from 'drizzle-orm/pg-core';
+import { pgTable, serial, text, integer, timestamp, doublePrecision, varchar, foreignKey, check, uniqueIndex } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
 export const users = pgTable('ims_users', {
@@ -22,12 +22,10 @@ export const products = pgTable('ims_products', {
 	product_id: serial('product_id').primaryKey(),
 	sku: varchar('sku', { length: 32 }).notNull(),
 	product_name: varchar('product_name', { length: 300 }).notNull(),
-	quantity: integer('quantity').notNull(),
 	price: doublePrecision('price').notNull(),
 	status: varchar('status', { length: 50 }).notNull().default('active') // 'active' or 'inactive'
 }, (table) => ({
 	productsSkuUnique: uniqueIndex('ims_products_sku_unique').on(table.sku),
-	productsQuantityCheck: check('ims_products_quantity_check', sql`${table.quantity} >= 0`),
 	productsPriceCheck: check('ims_products_price_check', sql`${table.price} >= 0`),
 	productsStatusCheck: check('ims_products_status_check', sql`${table.status} IN ('active', 'inactive')`)
 }));
@@ -70,19 +68,6 @@ export const orderItems = pgTable('ims_order_items', {
 		columns: [table.order_id],
 		foreignColumns: [orders.order_id]
 	}),
-	productIdFk: foreignKey({
-		columns: [table.product_id],
-		foreignColumns: [products.product_id]
-	})
-}));
-
-export const purchases = pgTable('ims_purchases', {
-	purchase_id: serial('purchase_id').primaryKey(),
-	product_id: integer('product_id').notNull(),
-	quantity: integer('quantity').notNull(),
-	purchase_date: timestamp('purchase_date').defaultNow().notNull()
-}, (table) => ({
-	purchasesQuantityCheck: check('ims_purchases_quantity_check', sql`${table.quantity} > 0`),
 	productIdFk: foreignKey({
 		columns: [table.product_id],
 		foreignColumns: [products.product_id]

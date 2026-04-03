@@ -4,6 +4,10 @@ export const idParamSchema = z.object({
   id: z.coerce.number().int().positive(),
 });
 
+export const skuParamSchema = z.object({
+  sku: z.string().trim().min(1).max(32),
+});
+
 export const listQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional(),
   limit: z.coerce.number().int().positive().max(50).optional(),

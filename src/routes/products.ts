@@ -1,13 +1,13 @@
 import express from 'express';
 import { randomInt } from 'node:crypto';
 import { db } from '../db/db.js';
-import { products, orderItems, purchases } from '../db/schema.js';
-import { and, asc, desc, eq, ilike, ne, or, sql } from 'drizzle-orm';
+import { products, orderItems } from '../db/schema.js';
+import { asc, desc, eq, ilike, or, sql } from 'drizzle-orm';
 import { requireAuth } from '../middleware/auth.js';
 import { requireAdmin, requireRole } from '../middleware/rbac.js';
 import { asyncHandler, AppError } from '../utils/errors.js';
 import { validate } from '../middleware/validate.js';
-import { idParamSchema } from '../validators/common.js';
+import { idParamSchema, skuParamSchema } from '../validators/common.js';
 import { productPayloadSchema } from '../validators/entity.js';
 import { buildPaginatedResponse, logPaginationDebug, parseListQuery } from '../utils/pagination.js';
 
@@ -28,17 +28,13 @@ const generateRandomSku = () => {
   return sku;
 };
 
-const ensureUniqueSku = async (candidateSku: string, excludeProductId?: number) => {
+const ensureUniqueSku = async (candidateSku: string) => {
   const normalized = normalizeSku(candidateSku);
 
-  const whereClause = typeof excludeProductId === 'number'
-    ? and(eq(products.sku, normalized), ne(products.product_id, excludeProductId))
-    : eq(products.sku, normalized);
-
   const existing = await db
-    .select({ product_id: products.product_id })
+    .select({ sku: products.sku })
     .from(products)
-    .where(whereClause)
+    .where(eq(products.sku, normalized))
     .limit(1);
 
   return existing.length === 0;
@@ -68,7 +64,7 @@ const resolveSkuForCreate = async (requestedSku?: string) => {
 
 router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
   const { page, limit, offset, sort, search } = parseListQuery(req.query);
-  const sortDirection = sort === 'asc' ? asc(products.product_id) : desc(products.product_id);
+  const sortDirection = sort === 'asc' ? asc(products.sku) : desc(products.sku);
   const whereClause = search
     ? or(ilike(products.product_name, `%${search}%`), ilike(products.sku, `%${search}%`))
     : undefined;
@@ -82,10 +78,8 @@ router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
   const [rows, totalRows] = await Promise.all([
     db
       .select({
-        product_id: products.product_id,
         sku: products.sku,
         product_name: products.product_name,
-        quantity: products.quantity,
         price: products.price,
         status: products.status,
       })
@@ -105,9 +99,9 @@ router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
   }));
 }));
 
-router.get('/:id', requireRole('Admin', 'User'), validate(idParamSchema, 'params'), asyncHandler(async (req, res) => {
-  const productId = Number(req.params.id);
-  const product = await db.select().from(products).where(eq(products.product_id, productId));
+router.get('/:sku', requireRole('Admin', 'User'), validate(skuParamSchema, 'params'), asyncHandler(async (req, res) => {
+  const sku = normalizeSku(req.params.sku);
+  const product = await db.select().from(products).where(eq(products.sku, sku));
   if (!product.length) {
     throw new AppError(404, 'Product not found.');
   }
@@ -128,7 +122,6 @@ router.post('/', requireAdmin, validate(productPayloadSchema), asyncHandler(asyn
   const [newProduct] = await db.insert(products).values({
     sku,
     product_name: payload.product_name,
-    quantity: 0,
     price: payload.price,
     status: payload.status,
   }).returning();
@@ -136,8 +129,8 @@ router.post('/', requireAdmin, validate(productPayloadSchema), asyncHandler(asyn
   res.status(201).json(newProduct);
 }));
 
-router.put('/:id', requireAdmin, validate(idParamSchema, 'params'), validate(productPayloadSchema), asyncHandler(async (req, res) => {
-  const productId = Number(req.params.id);
+router.put('/:sku', requireAdmin, validate(skuParamSchema, 'params'), validate(productPayloadSchema), asyncHandler(async (req, res) => {
+  const currentSku = normalizeSku(req.params.sku);
   const payload = req.body as {
     sku?: string;
     product_name: string;
@@ -146,21 +139,20 @@ router.put('/:id', requireAdmin, validate(idParamSchema, 'params'), validate(pro
   };
 
   const existingRows = await db
-    .select({ product_id: products.product_id, sku: products.sku, quantity: products.quantity })
+    .select({ sku: products.sku })
     .from(products)
-    .where(eq(products.product_id, productId))
+    .where(eq(products.sku, currentSku))
     .limit(1);
 
   if (!existingRows.length) {
     throw new AppError(404, 'Product not found.');
   }
 
-  const existing = existingRows[0];
   const normalizedSku = normalizeSku(payload.sku);
 
-  let nextSku = existing.sku;
-  if (normalizedSku && normalizedSku !== existing.sku) {
-    const available = await ensureUniqueSku(normalizedSku, productId);
+  let nextSku = currentSku;
+  if (normalizedSku && normalizedSku !== currentSku) {
+    const available = await ensureUniqueSku(normalizedSku);
     if (!available) {
       throw new AppError(409, 'SKU already exists. Please choose a different SKU.');
     }
@@ -170,27 +162,37 @@ router.put('/:id', requireAdmin, validate(idParamSchema, 'params'), validate(pro
   const [updatedProduct] = await db.update(products).set({
     sku: nextSku,
     product_name: payload.product_name,
-    quantity: existing.quantity,
     price: payload.price,
     status: payload.status,
-  }).where(eq(products.product_id, productId)).returning();
+  }).where(eq(products.sku, currentSku)).returning();
 
   res.json(updatedProduct);
 }));
 
-router.delete('/:id', requireAdmin, validate(idParamSchema, 'params'), asyncHandler(async (req, res) => {
-  const productId = Number(req.params.id);
+router.delete('/:sku', requireAdmin, validate(skuParamSchema, 'params'), asyncHandler(async (req, res) => {
+  const sku = normalizeSku(req.params.sku);
 
-  const [inOrderItems, inPurchases] = await Promise.all([
-    db.select({ order_item_id: orderItems.order_item_id }).from(orderItems).where(eq(orderItems.product_id, productId)).limit(1),
-    db.select({ purchase_id: purchases.purchase_id }).from(purchases).where(eq(purchases.product_id, productId)).limit(1),
-  ]);
+  const productRows = await db
+    .select({ product_id: products.product_id })
+    .from(products)
+    .where(eq(products.sku, sku))
+    .limit(1);
 
-  if (inOrderItems.length || inPurchases.length) {
+  if (!productRows.length) {
+    throw new AppError(404, 'Product not found.');
+  }
+
+  const inOrderItems = await db
+    .select({ order_item_id: orderItems.order_item_id })
+    .from(orderItems)
+    .where(eq(orderItems.product_id, productRows[0].product_id))
+    .limit(1);
+
+  if (inOrderItems.length) {
     throw new AppError(409, 'This record cannot be deleted because it is used in other records.');
   }
 
-  await db.delete(products).where(eq(products.product_id, productId));
+  await db.delete(products).where(eq(products.sku, sku));
   res.json({ success: true });
 }));
 

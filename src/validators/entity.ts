@@ -31,11 +31,6 @@ export const customerPayloadSchema = z.object({
   contact_no: z.string().trim().min(7, 'Contact number must be at least 7 characters.').max(20, 'Contact number must be at most 20 characters.'),
 });
 
-export const purchasePayloadSchema = z.object({
-  product_id: z.coerce.number().int().positive(),
-  quantity: z.coerce.number().int().positive(),
-});
-
 export const orderPayloadSchema = z.object({
   customer_id: z.coerce.number().int().positive(),
   delivery_date: deliveryDateSchema.optional(),
