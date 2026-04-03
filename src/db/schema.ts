@@ -41,8 +41,9 @@ export const orders = pgTable('ims_orders', {
 	order_id: serial('order_id').primaryKey(),
 	customer_id: integer('customer_id').notNull(),
 	order_date: timestamp('order_date').defaultNow().notNull(),
-	delivery_date: timestamp('delivery_date').defaultNow().notNull(),
-	delivery_status: varchar('delivery_status', { length: 50 }).notNull().default('pending'),
+	delivery_date: timestamp('delivery_date'),
+	delivery_status: varchar('delivery_status', { length: 50 }).notNull().default('unassigned'),
+	delivery_user_id: integer('delivery_user_id'),
 	delivered_at: timestamp('delivered_at'),
 	delivered_by: integer('delivered_by')
 }, (table) => ({
@@ -50,11 +51,15 @@ export const orders = pgTable('ims_orders', {
 		columns: [table.customer_id],
 		foreignColumns: [customers.customer_id]
 	}),
+	deliveryUserFk: foreignKey({
+		columns: [table.delivery_user_id],
+		foreignColumns: [users.user_id]
+	}),
 	deliveredByFk: foreignKey({
 		columns: [table.delivered_by],
 		foreignColumns: [users.user_id]
 	}),
-	ordersDeliveryStatusCheck: check('ims_orders_delivery_status_check', sql`${table.delivery_status} IN ('pending', 'out_for_delivery', 'delivered', 'failed_delivery')`)
+	ordersDeliveryStatusCheck: check('ims_orders_delivery_status_check', sql`${table.delivery_status} IN ('unassigned', 'scheduled', 'out_for_delivery', 'delivered', 'failed', 'cancelled')`)
 }));
 
 export const orderItems = pgTable('ims_order_items', {

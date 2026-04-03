@@ -1,13 +1,13 @@
 import express from 'express';
 import { db } from '../db/db.js';
-import { customers, orders, orderItems, products } from '../db/schema.js';
+import { customers, orders, orderItems, products, users } from '../db/schema.js';
 import { and, asc, desc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
 import { requireAuth } from '../middleware/auth.js';
 import { requireAdmin, requireRole } from '../middleware/rbac.js';
 import { asyncHandler, AppError } from '../utils/errors.js';
 import { validate } from '../middleware/validate.js';
 import { idParamSchema } from '../validators/common.js';
-import { orderPayloadSchema, updateDeliveryStatusSchema } from '../validators/entity.js';
+import { deliveryAssignmentSchema, orderPayloadSchema, updateDeliveryStatusSchema } from '../validators/entity.js';
 import { buildPaginatedResponse, logPaginationDebug, parseListQuery } from '../utils/pagination.js';
 
 const router = express.Router();
@@ -16,10 +16,12 @@ router.use(requireAuth);
 const isDevelopment = process.env.NODE_ENV !== 'production';
 
 const DELIVERY_STATUSES = {
-  pending: 'pending',
+  unassigned: 'unassigned',
+  scheduled: 'scheduled',
   out_for_delivery: 'out_for_delivery',
   delivered: 'delivered',
-  failed_delivery: 'failed_delivery',
+  failed: 'failed',
+  cancelled: 'cancelled',
 };
 
 const MS_PER_MINUTE = 60 * 1000;
@@ -27,13 +29,37 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 type OrderPayload = {
   customer_id: number;
+  order_date?: string;
   delivery_date?: string;
   items_data: Array<{ product_id: number; quantity: number; price: number }>;
 };
 
-const parseDeliveryDate = (value) => {
-  if (!value) {
+const parseOrderDate = (value) => {
+  if (value == null || String(value).trim() === '') {
     return new Date();
+  }
+
+  const raw = String(value).trim();
+  const [year, month, day] = raw.split('-').map(Number);
+  const parsed = new Date(year, month - 1, day, 12, 0, 0, 0);
+
+  if (
+    !Number.isFinite(year)
+    || !Number.isFinite(month)
+    || !Number.isFinite(day)
+    || parsed.getFullYear() !== year
+    || (parsed.getMonth() + 1) !== month
+    || parsed.getDate() !== day
+  ) {
+    throw new AppError(400, 'Invalid order date. Use YYYY-MM-DD.');
+  }
+
+  return parsed;
+};
+
+const parseDeliveryDate = (value) => {
+  if (value == null || String(value).trim() === '') {
+    return null;
   }
 
   const raw = String(value).trim();
@@ -52,6 +78,66 @@ const parseDeliveryDate = (value) => {
   }
 
   return parsed;
+};
+
+const isAdminRequest = (req) => String(req.localUser?.acc_type || '').toLowerCase() === 'admin';
+
+const assertValidDeliveryStatus = (value) => {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = String(value).trim();
+  if (!Object.values(DELIVERY_STATUSES).includes(normalized)) {
+    throw new AppError(400, 'Invalid delivery status filter.');
+  }
+
+  return normalized;
+};
+
+const deliveryTransitionMap = {
+  [DELIVERY_STATUSES.unassigned]: new Set([DELIVERY_STATUSES.scheduled, DELIVERY_STATUSES.cancelled]),
+  [DELIVERY_STATUSES.scheduled]: new Set([DELIVERY_STATUSES.out_for_delivery, DELIVERY_STATUSES.cancelled]),
+  [DELIVERY_STATUSES.out_for_delivery]: new Set([DELIVERY_STATUSES.delivered, DELIVERY_STATUSES.failed]),
+  [DELIVERY_STATUSES.failed]: new Set([DELIVERY_STATUSES.scheduled, DELIVERY_STATUSES.cancelled]),
+  [DELIVERY_STATUSES.delivered]: new Set(),
+  [DELIVERY_STATUSES.cancelled]: new Set(),
+};
+
+const canTransitionDeliveryStatus = (currentStatus, nextStatus) => {
+  if (currentStatus === nextStatus) {
+    return true;
+  }
+
+  return deliveryTransitionMap[currentStatus]?.has(nextStatus) || false;
+};
+
+const ensureAssignableDeliveryUser = async (executor, deliveryUserId) => {
+  const deliveryUserRows = await executor
+    .select({
+      user_id: users.user_id,
+      acc_type: users.acc_type,
+      status: users.status,
+      username: users.username,
+    })
+    .from(users)
+    .where(eq(users.user_id, deliveryUserId))
+    .limit(1);
+
+  const deliveryUser = deliveryUserRows[0];
+  if (!deliveryUser) {
+    throw new AppError(404, 'Delivery user not found.');
+  }
+
+  if (String(deliveryUser.acc_type).toLowerCase() === 'admin') {
+    throw new AppError(400, 'Assigned delivery user must be a delivery account.');
+  }
+
+  if (String(deliveryUser.status).toLowerCase() !== 'active') {
+    throw new AppError(400, 'Assigned delivery user must be active.');
+  }
+
+  return deliveryUser;
 };
 
 const resolveTodayRange = (utcOffsetMinutes = null) => {
@@ -105,23 +191,7 @@ const isTodayDeliveryDate = (value, utcOffsetMinutes = null) => {
   return date >= start && date < end;
 };
 
-const autoMarkTodayOrdersOutForDelivery = async (utcOffsetMinutes = null) => {
-  const { start, end } = resolveTodayRange(utcOffsetMinutes);
-
-  await db
-    .update(orders)
-    .set({ delivery_status: DELIVERY_STATUSES.out_for_delivery })
-    .where(and(
-      gte(orders.delivery_date, start),
-      lt(orders.delivery_date, end),
-      eq(orders.delivery_status, DELIVERY_STATUSES.pending),
-    ));
-};
-
 router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
-  const utcOffsetMinutes = parseClientUtcOffsetMinutes(req);
-  await autoMarkTodayOrdersOutForDelivery(utcOffsetMinutes);
-
   const { page, limit, offset, sort, search } = parseListQuery(req.query);
   const sortDirection = sort === 'asc' ? asc(orders.order_id) : desc(orders.order_id);
   const whereClause = search
@@ -148,6 +218,7 @@ router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
         order_date: orders.order_date,
         delivery_date: orders.delivery_date,
         delivery_status: orders.delivery_status,
+        delivery_user_id: orders.delivery_user_id,
         delivered_at: orders.delivered_at,
         delivered_by: orders.delivered_by,
       })
@@ -197,17 +268,121 @@ router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
   }));
 }));
 
+router.get('/delivery/admin', requireAdmin, asyncHandler(async (req, res) => {
+  const { page, limit, offset, sort, search } = parseListQuery(req.query);
+  const requestedStatus = assertValidDeliveryStatus(req.query.delivery_status);
+  const sortDirection = sort === 'asc' ? asc(orders.order_id) : desc(orders.order_id);
+  const filters = [];
+
+  if (requestedStatus) {
+    filters.push(eq(orders.delivery_status, requestedStatus));
+  }
+
+  if (search) {
+    filters.push(sql`(
+      ${orders.order_id}::text ILIKE ${`%${search}%`}
+      OR ${customers.name} ILIKE ${`%${search}%`}
+      OR ${customers.address} ILIKE ${`%${search}%`}
+      OR ${customers.contact_no} ILIKE ${`%${search}%`}
+      OR ${orders.delivery_status} ILIKE ${`%${search}%`}
+      OR EXISTS (
+        SELECT 1
+        FROM ${users}
+        WHERE ${users.user_id} = ${orders.delivery_user_id}
+          AND ${users.username} ILIKE ${`%${search}%`}
+      )
+    )`);
+  }
+
+  const whereClause = filters.length ? and(...filters) : undefined;
+  const deliveryUserName = sql<string | null>`(
+    SELECT ${users.username}
+    FROM ${users}
+    WHERE ${users.user_id} = ${orders.delivery_user_id}
+    LIMIT 1
+  )`;
+
+  const [ordersPage, totalRows] = await Promise.all([
+    db
+      .select({
+        order_id: orders.order_id,
+        customer_id: orders.customer_id,
+        order_date: orders.order_date,
+        delivery_date: orders.delivery_date,
+        delivery_status: orders.delivery_status,
+        delivery_user_id: orders.delivery_user_id,
+        delivery_user_name: deliveryUserName,
+        delivered_at: orders.delivered_at,
+        delivered_by: orders.delivered_by,
+        customer_name: customers.name,
+        address: customers.address,
+        contact_no: customers.contact_no,
+      })
+      .from(orders)
+      .leftJoin(customers, eq(orders.customer_id, customers.customer_id))
+      .where(whereClause)
+      .orderBy(sortDirection)
+      .limit(limit)
+      .offset(offset),
+    db
+      .select({ count: sql`count(*)::int` })
+      .from(orders)
+      .leftJoin(customers, eq(orders.customer_id, customers.customer_id))
+      .where(whereClause),
+  ]);
+
+  const orderIds = ordersPage.map((order) => order.order_id);
+  const pageItems = orderIds.length
+    ? await db.select().from(orderItems).where(inArray(orderItems.order_id, orderIds))
+    : [];
+
+  const itemsByOrderId = pageItems.reduce((acc, item) => {
+    const key = item.order_id;
+    if (!acc.has(key)) {
+      acc.set(key, []);
+    }
+    acc.get(key).push(item);
+    return acc;
+  }, new Map());
+
+  const responseData = ordersPage.map((order) => {
+    const items = itemsByOrderId.get(order.order_id) || [];
+    const totalAmount = items.reduce((sum, item) => sum + (Number(item.quantity) * Number(item.price)), 0);
+
+    return {
+      ...order,
+      items_count: items.length,
+      total_amount: totalAmount,
+    };
+  });
+
+  res.json(buildPaginatedResponse({
+    data: responseData,
+    total: Number(totalRows[0]?.count || 0),
+    page,
+    limit,
+  }));
+}));
+
 router.get('/delivery/today', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
   const utcOffsetMinutes = parseClientUtcOffsetMinutes(req);
-  await autoMarkTodayOrdersOutForDelivery(utcOffsetMinutes);
-
   const { page, limit, offset, sort, search } = parseListQuery(req.query);
   const sortDirection = sort === 'asc' ? asc(orders.order_id) : desc(orders.order_id);
   const { start, end } = resolveTodayRange(utcOffsetMinutes);
   const filters = [
     gte(orders.delivery_date, start),
     lt(orders.delivery_date, end),
+    inArray(orders.delivery_status, [
+      DELIVERY_STATUSES.scheduled,
+      DELIVERY_STATUSES.out_for_delivery,
+      DELIVERY_STATUSES.delivered,
+      DELIVERY_STATUSES.failed,
+    ]),
   ];
+
+  if (!isAdminRequest(req)) {
+    filters.push(eq(orders.delivery_user_id, req.localUser.user_id));
+  }
 
   if (search) {
     filters.push(sql`(
@@ -229,6 +404,7 @@ router.get('/delivery/today', requireRole('Admin', 'User'), asyncHandler(async (
         order_date: orders.order_date,
         delivery_date: orders.delivery_date,
         delivery_status: orders.delivery_status,
+        delivery_user_id: orders.delivery_user_id,
         delivered_at: orders.delivered_at,
         delivered_by: orders.delivered_by,
         customer_name: customers.name,
@@ -290,6 +466,7 @@ router.get('/:id', requireRole('Admin', 'User'), validate(idParamSchema, 'params
       order_date: orders.order_date,
       delivery_date: orders.delivery_date,
       delivery_status: orders.delivery_status,
+      delivery_user_id: orders.delivery_user_id,
       delivered_at: orders.delivered_at,
       delivered_by: orders.delivered_by,
       customer_name: customers.name,
@@ -316,8 +493,7 @@ router.get('/:id', requireRole('Admin', 'User'), validate(idParamSchema, 'params
 }));
 
 router.post('/', requireAdmin, validate(orderPayloadSchema), asyncHandler(async (req, res) => {
-  const { customer_id, items_data, delivery_date } = req.body as OrderPayload;
-  const utcOffsetMinutes = parseClientUtcOffsetMinutes(req);
+  const { customer_id, order_date, items_data, delivery_date } = req.body as OrderPayload;
   const uniqueProductIds: number[] = [...new Set(items_data.map((item) => item.product_id))];
 
   const result = await db.transaction(async (tx) => {
@@ -353,15 +529,16 @@ router.post('/', requireAdmin, validate(orderPayloadSchema), asyncHandler(async 
     }
 
     const parsedDeliveryDate = parseDeliveryDate(delivery_date);
-    const initialDeliveryStatus = isTodayDeliveryDate(parsedDeliveryDate, utcOffsetMinutes)
-      ? DELIVERY_STATUSES.out_for_delivery
-      : DELIVERY_STATUSES.pending;
+    const initialDeliveryStatus = parsedDeliveryDate
+      ? DELIVERY_STATUSES.scheduled
+      : DELIVERY_STATUSES.unassigned;
 
     const [newOrder] = await tx.insert(orders).values({
       customer_id,
-      order_date: new Date(),
+      order_date: parseOrderDate(order_date),
       delivery_date: parsedDeliveryDate,
       delivery_status: initialDeliveryStatus,
+      delivery_user_id: null,
     }).returning();
 
     const createdItems = [];
@@ -390,7 +567,7 @@ router.post('/', requireAdmin, validate(orderPayloadSchema), asyncHandler(async 
 
 router.put('/:id', requireAdmin, validate(idParamSchema, 'params'), validate(orderPayloadSchema), asyncHandler(async (req, res) => {
   const orderId = Number(req.params.id);
-  const { customer_id, items_data, delivery_date } = req.body as OrderPayload;
+  const { customer_id, order_date, items_data, delivery_date } = req.body as OrderPayload;
   const uniqueProductIds: number[] = [...new Set(items_data.map((item) => item.product_id))];
 
   const result = await db.transaction(async (tx) => {
@@ -398,7 +575,9 @@ router.put('/:id', requireAdmin, validate(idParamSchema, 'params'), validate(ord
       .select({
         order_id: orders.order_id,
         order_date: orders.order_date,
+        delivery_date: orders.delivery_date,
         delivery_status: orders.delivery_status,
+        delivery_user_id: orders.delivery_user_id,
         delivered_at: orders.delivered_at,
         delivered_by: orders.delivered_by,
       })
@@ -443,11 +622,39 @@ router.put('/:id', requireAdmin, validate(idParamSchema, 'params'), validate(ord
       }
     }
 
-    const parsedDeliveryDate = parseDeliveryDate(delivery_date);
+    const parsedDeliveryDate = delivery_date === undefined ? undefined : parseDeliveryDate(delivery_date);
+    const updatePayload: {
+      customer_id: number;
+      order_date?: Date;
+      delivery_date?: Date | null;
+      delivery_status?: string;
+      delivery_user_id?: number | null;
+      delivered_at?: Date | null;
+      delivered_by?: number | null;
+    } = {
+      customer_id,
+    };
+
+    if (order_date !== undefined) {
+      updatePayload.order_date = parseOrderDate(order_date);
+    }
+
+    if (delivery_date !== undefined) {
+      updatePayload.delivery_date = parsedDeliveryDate;
+
+      if (!parsedDeliveryDate) {
+        updatePayload.delivery_status = DELIVERY_STATUSES.unassigned;
+        updatePayload.delivery_user_id = null;
+        updatePayload.delivered_at = null;
+        updatePayload.delivered_by = null;
+      } else if (existingOrderRows[0].delivery_status === DELIVERY_STATUSES.unassigned) {
+        updatePayload.delivery_status = DELIVERY_STATUSES.scheduled;
+      }
+    }
 
     const [updatedOrder] = await tx
       .update(orders)
-      .set({ customer_id, delivery_date: parsedDeliveryDate })
+      .set(updatePayload)
       .where(eq(orders.order_id, orderId))
       .returning({
         order_id: orders.order_id,
@@ -455,6 +662,7 @@ router.put('/:id', requireAdmin, validate(idParamSchema, 'params'), validate(ord
         order_date: orders.order_date,
         delivery_date: orders.delivery_date,
         delivery_status: orders.delivery_status,
+        delivery_user_id: orders.delivery_user_id,
         delivered_at: orders.delivered_at,
         delivered_by: orders.delivered_by,
       });
@@ -491,6 +699,39 @@ router.put('/:id', requireAdmin, validate(idParamSchema, 'params'), validate(ord
 router.patch('/:id/delivery-status', requireRole('Admin', 'User'), validate(idParamSchema, 'params'), validate(updateDeliveryStatusSchema), asyncHandler(async (req, res) => {
   const orderId = Number(req.params.id);
   const { delivery_status } = req.body;
+  const existingOrderRows = await db
+    .select({
+      order_id: orders.order_id,
+      delivery_status: orders.delivery_status,
+      delivery_user_id: orders.delivery_user_id,
+    })
+    .from(orders)
+    .where(eq(orders.order_id, orderId))
+    .limit(1);
+
+  const existingOrder = existingOrderRows[0];
+  if (!existingOrder) {
+    throw new AppError(404, 'Order not found.');
+  }
+
+  const adminRequest = isAdminRequest(req);
+  if (!adminRequest) {
+    if (!existingOrder.delivery_user_id || existingOrder.delivery_user_id !== req.localUser.user_id) {
+      throw new AppError(403, 'You are not assigned to this delivery order.');
+    }
+
+    if (![DELIVERY_STATUSES.out_for_delivery, DELIVERY_STATUSES.delivered, DELIVERY_STATUSES.failed].includes(delivery_status)) {
+      throw new AppError(403, 'Delivery users cannot set that status.');
+    }
+  }
+
+  if (!canTransitionDeliveryStatus(existingOrder.delivery_status, delivery_status)) {
+    throw new AppError(400, `Cannot change delivery status from ${existingOrder.delivery_status} to ${delivery_status}.`);
+  }
+
+  if ([DELIVERY_STATUSES.out_for_delivery, DELIVERY_STATUSES.delivered, DELIVERY_STATUSES.failed].includes(delivery_status) && !existingOrder.delivery_user_id) {
+    throw new AppError(400, 'Assign a delivery user before updating this delivery status.');
+  }
 
   const updates = {
     delivery_status,
@@ -513,6 +754,7 @@ router.patch('/:id/delivery-status', requireRole('Admin', 'User'), validate(idPa
       order_date: orders.order_date,
       delivery_date: orders.delivery_date,
       delivery_status: orders.delivery_status,
+      delivery_user_id: orders.delivery_user_id,
       delivered_at: orders.delivered_at,
       delivered_by: orders.delivered_by,
     });
@@ -520,6 +762,63 @@ router.patch('/:id/delivery-status', requireRole('Admin', 'User'), validate(idPa
   if (!updatedOrder) {
     throw new AppError(404, 'Order not found.');
   }
+
+  res.json(updatedOrder);
+}));
+
+router.patch('/:id/delivery-assignment', requireAdmin, validate(idParamSchema, 'params'), validate(deliveryAssignmentSchema), asyncHandler(async (req, res) => {
+  const orderId = Number(req.params.id);
+  const { delivery_date, delivery_user_id } = req.body;
+  const parsedDeliveryDate = parseDeliveryDate(delivery_date);
+
+  if (!parsedDeliveryDate) {
+    throw new AppError(400, 'Delivery date is required.');
+  }
+
+  const updatedOrder = await db.transaction(async (tx) => {
+    const existingOrderRows = await tx
+      .select({
+        order_id: orders.order_id,
+        delivery_status: orders.delivery_status,
+      })
+      .from(orders)
+      .where(eq(orders.order_id, orderId))
+      .limit(1);
+
+    const existingOrder = existingOrderRows[0];
+    if (!existingOrder) {
+      throw new AppError(404, 'Order not found.');
+    }
+
+    if ([DELIVERY_STATUSES.delivered, DELIVERY_STATUSES.cancelled].includes(existingOrder.delivery_status)) {
+      throw new AppError(400, 'Delivered or cancelled orders cannot be reassigned.');
+    }
+
+    await ensureAssignableDeliveryUser(tx, delivery_user_id);
+
+    const [order] = await tx
+      .update(orders)
+      .set({
+        delivery_date: parsedDeliveryDate,
+        delivery_user_id,
+        delivery_status: DELIVERY_STATUSES.scheduled,
+        delivered_at: null,
+        delivered_by: null,
+      })
+      .where(eq(orders.order_id, orderId))
+      .returning({
+        order_id: orders.order_id,
+        customer_id: orders.customer_id,
+        order_date: orders.order_date,
+        delivery_date: orders.delivery_date,
+        delivery_status: orders.delivery_status,
+        delivery_user_id: orders.delivery_user_id,
+        delivered_at: orders.delivered_at,
+        delivered_by: orders.delivered_by,
+      });
+
+    return order;
+  });
 
   res.json(updatedOrder);
 }));

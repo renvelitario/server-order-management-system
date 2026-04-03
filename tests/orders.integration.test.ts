@@ -75,7 +75,7 @@ describe('orders route integration', () => {
       .post('/api/orders')
       .send({
         customer_id: 2,
-        items_data: [{ product_id: 1, quantity: 3 }],
+        items_data: [{ product_id: 1, quantity: 3, price: 50 }],
       });
 
     expect(response.status).toBe(201);
