@@ -6,13 +6,25 @@ import { requireAuth } from '../middleware/auth.js';
 import { requireAdmin, requireRole } from '../middleware/rbac.js';
 import { asyncHandler, AppError } from '../utils/errors.js';
 import { validate } from '../middleware/validate.js';
-import { idParamSchema, skuParamSchema } from '../validators/common.js';
+import { idParamSchema } from '../validators/common.js';
 import { productPayloadSchema } from '../validators/entity.js';
 import { buildPaginatedResponse, logPaginationDebug, parseListQuery } from '../utils/pagination.js';
-import { ensureUniqueSku, normalizeSku, resolveSkuForCreate } from '../utils/sku.js';
 
 const router = express.Router();
 router.use(requireAuth);
+
+const normalizeSku = (value: unknown): string => String(value || '').trim().toUpperCase();
+
+const ensureUniqueSku = async (candidateSku: string): Promise<boolean> => {
+  const normalized = normalizeSku(candidateSku);
+  const existing = await db
+    .select({ sku: products.sku })
+    .from(products)
+    .where(eq(products.sku, normalized))
+    .limit(1);
+
+  return existing.length === 0;
+};
 
 router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
   const { page, limit, offset, sort, search } = parseListQuery(req.query);
@@ -30,6 +42,7 @@ router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
   const [rows, totalRows] = await Promise.all([
     db
       .select({
+        product_id: products.product_id,
         sku: products.sku,
         product_name: products.product_name,
         price: products.price,
@@ -51,9 +64,9 @@ router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
   }));
 }));
 
-router.get('/:sku', requireRole('Admin', 'User'), validate(skuParamSchema, 'params'), asyncHandler(async (req, res) => {
-  const sku = normalizeSku(req.params.sku);
-  const product = await db.select().from(products).where(eq(products.sku, sku));
+router.get('/id/:id', requireRole('Admin', 'User'), validate(idParamSchema, 'params'), asyncHandler(async (req, res) => {
+  const productId = Number(req.params.id);
+  const product = await db.select().from(products).where(eq(products.product_id, productId));
   if (!product.length) {
     throw new AppError(404, 'Product not found.');
   }
@@ -69,10 +82,17 @@ router.post('/', requireAdmin, validate(productPayloadSchema), asyncHandler(asyn
     status: string;
   };
 
-  const sku = await resolveSkuForCreate(payload.sku);
+  const normalizedSku = normalizeSku(payload.sku);
+
+  if (normalizedSku) {
+    const available = await ensureUniqueSku(normalizedSku);
+    if (!available) {
+      throw new AppError(409, 'SKU already exists. Please choose a different SKU.');
+    }
+  }
 
   const [newProduct] = await db.insert(products).values({
-    sku,
+    sku: normalizedSku || null,
     product_name: payload.product_name,
     price: payload.price,
     status: payload.status,
@@ -81,8 +101,8 @@ router.post('/', requireAdmin, validate(productPayloadSchema), asyncHandler(asyn
   res.status(201).json(newProduct);
 }));
 
-router.put('/:sku', requireAdmin, validate(skuParamSchema, 'params'), validate(productPayloadSchema), asyncHandler(async (req, res) => {
-  const currentSku = normalizeSku(req.params.sku);
+router.put('/id/:id', requireAdmin, validate(idParamSchema, 'params'), validate(productPayloadSchema), asyncHandler(async (req, res) => {
+  const productId = Number(req.params.id);
   const payload = req.body as {
     sku?: string;
     product_name: string;
@@ -91,9 +111,9 @@ router.put('/:sku', requireAdmin, validate(skuParamSchema, 'params'), validate(p
   };
 
   const existingRows = await db
-    .select({ sku: products.sku })
+    .select({ product_id: products.product_id, sku: products.sku })
     .from(products)
-    .where(eq(products.sku, currentSku))
+    .where(eq(products.product_id, productId))
     .limit(1);
 
   if (!existingRows.length) {
@@ -102,32 +122,30 @@ router.put('/:sku', requireAdmin, validate(skuParamSchema, 'params'), validate(p
 
   const normalizedSku = normalizeSku(payload.sku);
 
-  let nextSku = currentSku;
-  if (normalizedSku && normalizedSku !== currentSku) {
+  if (normalizedSku && normalizedSku !== (existingRows[0].sku || '')) {
     const available = await ensureUniqueSku(normalizedSku);
     if (!available) {
       throw new AppError(409, 'SKU already exists. Please choose a different SKU.');
     }
-    nextSku = normalizedSku;
   }
 
   const [updatedProduct] = await db.update(products).set({
-    sku: nextSku,
+    sku: normalizedSku || null,
     product_name: payload.product_name,
     price: payload.price,
     status: payload.status,
-  }).where(eq(products.sku, currentSku)).returning();
+  }).where(eq(products.product_id, productId)).returning();
 
   res.json(updatedProduct);
 }));
 
-router.delete('/:sku', requireAdmin, validate(skuParamSchema, 'params'), asyncHandler(async (req, res) => {
-  const sku = normalizeSku(req.params.sku);
+router.delete('/id/:id', requireAdmin, validate(idParamSchema, 'params'), asyncHandler(async (req, res) => {
+  const productId = Number(req.params.id);
 
   const productRows = await db
     .select({ product_id: products.product_id })
     .from(products)
-    .where(eq(products.sku, sku))
+    .where(eq(products.product_id, productId))
     .limit(1);
 
   if (!productRows.length) {
@@ -144,7 +162,7 @@ router.delete('/:sku', requireAdmin, validate(skuParamSchema, 'params'), asyncHa
     throw new AppError(409, 'This record cannot be deleted because it is used in other records.');
   }
 
-  await db.delete(products).where(eq(products.sku, sku));
+  await db.delete(products).where(eq(products.product_id, productId));
   res.json({ success: true });
 }));
 

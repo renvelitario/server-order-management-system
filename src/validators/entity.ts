@@ -19,7 +19,7 @@ const deliveryDateSchema = z.string().refine(isValidDateOnly, {
 });
 
 export const productPayloadSchema = z.object({
-  sku: z.string().trim().toUpperCase().regex(/^[A-Z0-9]{8,32}$/, 'SKU must be 8-32 uppercase letters/numbers and supports 13-digit numeric values.').optional().or(z.literal('')),
+  sku: z.string().trim().toUpperCase().regex(/^[A-Z0-9]{8,32}$/, 'SKU must be 8-32 uppercase letters/numbers.').optional().or(z.literal('')),
   product_name: z.string().trim().min(2).max(300),
   price: z.coerce.number().min(0),
   status: statusSchema.default('active'),

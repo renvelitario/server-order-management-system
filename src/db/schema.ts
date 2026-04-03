@@ -20,7 +20,7 @@ export const users = pgTable('ims_users', {
 
 export const products = pgTable('ims_products', {
 	product_id: serial('product_id').primaryKey(),
-	sku: varchar('sku', { length: 32 }).notNull(),
+	sku: varchar('sku', { length: 32 }),
 	product_name: varchar('product_name', { length: 300 }).notNull(),
 	price: doublePrecision('price').notNull(),
 	status: varchar('status', { length: 50 }).notNull().default('active') // 'active' or 'inactive'

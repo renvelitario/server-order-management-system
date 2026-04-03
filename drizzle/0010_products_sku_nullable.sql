@@ -1,0 +1,2 @@
+ALTER TABLE ims_products
+  ALTER COLUMN sku DROP NOT NULL;
