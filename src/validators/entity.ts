@@ -41,11 +41,10 @@ export const orderPayloadSchema = z.object({
   })).min(1),
 });
 
-export const deliveryStatusSchema = z.enum(['unassigned', 'scheduled', 'out_for_delivery', 'delivered', 'failed', 'cancelled']);
+export const deliveryStatusSchema = z.enum(['unassigned', 'pending', 'out_for_delivery', 'delivered', 'failed', 'cancelled']);
 
 export const deliveryAssignmentSchema = z.object({
   delivery_date: deliveryDateSchema,
-  delivery_user_id: z.coerce.number().int().positive(),
 });
 
 export const updateDeliveryStatusSchema = z.object({

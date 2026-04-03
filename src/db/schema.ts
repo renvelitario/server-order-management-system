@@ -59,7 +59,7 @@ export const orders = pgTable('ims_orders', {
 		columns: [table.delivered_by],
 		foreignColumns: [users.user_id]
 	}),
-	ordersDeliveryStatusCheck: check('ims_orders_delivery_status_check', sql`${table.delivery_status} IN ('unassigned', 'scheduled', 'out_for_delivery', 'delivered', 'failed', 'cancelled')`)
+	ordersDeliveryStatusCheck: check('ims_orders_delivery_status_check', sql`${table.delivery_status} IN ('unassigned', 'pending', 'out_for_delivery', 'delivered', 'failed', 'cancelled')`)
 }));
 
 export const orderItems = pgTable('ims_order_items', {

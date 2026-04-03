@@ -1,6 +1,6 @@
 import express from 'express';
 import { db } from '../db/db.js';
-import { customers, orders, orderItems, products, users } from '../db/schema.js';
+import { customers, orders, orderItems, products } from '../db/schema.js';
 import { and, asc, desc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
 import { requireAuth } from '../middleware/auth.js';
 import { requireAdmin, requireRole } from '../middleware/rbac.js';
@@ -17,7 +17,7 @@ const isDevelopment = process.env.NODE_ENV !== 'production';
 
 const DELIVERY_STATUSES = {
   unassigned: 'unassigned',
-  scheduled: 'scheduled',
+  pending: 'pending',
   out_for_delivery: 'out_for_delivery',
   delivered: 'delivered',
   failed: 'failed',
@@ -96,10 +96,10 @@ const assertValidDeliveryStatus = (value) => {
 };
 
 const deliveryTransitionMap = {
-  [DELIVERY_STATUSES.unassigned]: new Set([DELIVERY_STATUSES.scheduled, DELIVERY_STATUSES.cancelled]),
-  [DELIVERY_STATUSES.scheduled]: new Set([DELIVERY_STATUSES.out_for_delivery, DELIVERY_STATUSES.cancelled]),
+  [DELIVERY_STATUSES.unassigned]: new Set([DELIVERY_STATUSES.pending, DELIVERY_STATUSES.cancelled]),
+  [DELIVERY_STATUSES.pending]: new Set([DELIVERY_STATUSES.out_for_delivery, DELIVERY_STATUSES.cancelled]),
   [DELIVERY_STATUSES.out_for_delivery]: new Set([DELIVERY_STATUSES.delivered, DELIVERY_STATUSES.failed]),
-  [DELIVERY_STATUSES.failed]: new Set([DELIVERY_STATUSES.scheduled, DELIVERY_STATUSES.cancelled]),
+  [DELIVERY_STATUSES.failed]: new Set([DELIVERY_STATUSES.pending, DELIVERY_STATUSES.cancelled]),
   [DELIVERY_STATUSES.delivered]: new Set(),
   [DELIVERY_STATUSES.cancelled]: new Set(),
 };
@@ -110,34 +110,6 @@ const canTransitionDeliveryStatus = (currentStatus, nextStatus) => {
   }
 
   return deliveryTransitionMap[currentStatus]?.has(nextStatus) || false;
-};
-
-const ensureAssignableDeliveryUser = async (executor, deliveryUserId) => {
-  const deliveryUserRows = await executor
-    .select({
-      user_id: users.user_id,
-      acc_type: users.acc_type,
-      status: users.status,
-      username: users.username,
-    })
-    .from(users)
-    .where(eq(users.user_id, deliveryUserId))
-    .limit(1);
-
-  const deliveryUser = deliveryUserRows[0];
-  if (!deliveryUser) {
-    throw new AppError(404, 'Delivery user not found.');
-  }
-
-  if (String(deliveryUser.acc_type).toLowerCase() === 'admin') {
-    throw new AppError(400, 'Assigned delivery user must be a delivery account.');
-  }
-
-  if (String(deliveryUser.status).toLowerCase() !== 'active') {
-    throw new AppError(400, 'Assigned delivery user must be active.');
-  }
-
-  return deliveryUser;
 };
 
 const resolveTodayRange = (utcOffsetMinutes = null) => {
@@ -296,22 +268,10 @@ router.get('/delivery/admin', requireAdmin, asyncHandler(async (req, res) => {
       OR ${customers.address} ILIKE ${`%${search}%`}
       OR ${customers.contact_no} ILIKE ${`%${search}%`}
       OR ${orders.delivery_status} ILIKE ${`%${search}%`}
-      OR EXISTS (
-        SELECT 1
-        FROM ${users}
-        WHERE ${users.user_id} = ${orders.delivery_user_id}
-          AND ${users.username} ILIKE ${`%${search}%`}
-      )
     )`);
   }
 
   const whereClause = filters.length ? and(...filters) : undefined;
-  const deliveryUserName = sql<string | null>`(
-    SELECT ${users.username}
-    FROM ${users}
-    WHERE ${users.user_id} = ${orders.delivery_user_id}
-    LIMIT 1
-  )`;
 
   const [ordersPage, totalRows] = await Promise.all([
     db
@@ -322,7 +282,6 @@ router.get('/delivery/admin', requireAdmin, asyncHandler(async (req, res) => {
         delivery_date: orders.delivery_date,
         delivery_status: orders.delivery_status,
         delivery_user_id: orders.delivery_user_id,
-        delivery_user_name: deliveryUserName,
         delivered_at: orders.delivered_at,
         delivered_by: orders.delivered_by,
         customer_name: customers.name,
@@ -384,16 +343,12 @@ router.get('/delivery/today', requireRole('Admin', 'User'), asyncHandler(async (
     gte(orders.delivery_date, start),
     lt(orders.delivery_date, end),
     inArray(orders.delivery_status, [
-      DELIVERY_STATUSES.scheduled,
+      DELIVERY_STATUSES.pending,
       DELIVERY_STATUSES.out_for_delivery,
       DELIVERY_STATUSES.delivered,
       DELIVERY_STATUSES.failed,
     ]),
   ];
-
-  if (!isAdminRequest(req)) {
-    filters.push(eq(orders.delivery_user_id, req.localUser.user_id));
-  }
 
   if (search) {
     filters.push(sql`(
@@ -551,7 +506,7 @@ router.post('/', requireAdmin, validate(orderPayloadSchema), asyncHandler(async 
 
     const parsedDeliveryDate = parseDeliveryDate(delivery_date);
     const initialDeliveryStatus = parsedDeliveryDate
-      ? DELIVERY_STATUSES.scheduled
+      ? DELIVERY_STATUSES.pending
       : DELIVERY_STATUSES.unassigned;
 
     const [newOrder] = await tx.insert(orders).values({
@@ -669,7 +624,7 @@ router.put('/:id', requireAdmin, validate(idParamSchema, 'params'), validate(ord
         updatePayload.delivered_at = null;
         updatePayload.delivered_by = null;
       } else if (existingOrderRows[0].delivery_status === DELIVERY_STATUSES.unassigned) {
-        updatePayload.delivery_status = DELIVERY_STATUSES.scheduled;
+        updatePayload.delivery_status = DELIVERY_STATUSES.pending;
       }
     }
 
@@ -737,21 +692,13 @@ router.patch('/:id/delivery-status', requireRole('Admin', 'User'), validate(idPa
 
   const adminRequest = isAdminRequest(req);
   if (!adminRequest) {
-    if (!existingOrder.delivery_user_id || existingOrder.delivery_user_id !== req.localUser.user_id) {
-      throw new AppError(403, 'You are not assigned to this delivery order.');
-    }
-
-    if (![DELIVERY_STATUSES.out_for_delivery, DELIVERY_STATUSES.delivered, DELIVERY_STATUSES.failed].includes(delivery_status)) {
+    if (![DELIVERY_STATUSES.pending, DELIVERY_STATUSES.out_for_delivery, DELIVERY_STATUSES.delivered, DELIVERY_STATUSES.failed].includes(delivery_status)) {
       throw new AppError(403, 'Delivery users cannot set that status.');
     }
   }
 
   if (!canTransitionDeliveryStatus(existingOrder.delivery_status, delivery_status)) {
     throw new AppError(400, `Cannot change delivery status from ${existingOrder.delivery_status} to ${delivery_status}.`);
-  }
-
-  if ([DELIVERY_STATUSES.out_for_delivery, DELIVERY_STATUSES.delivered, DELIVERY_STATUSES.failed].includes(delivery_status) && !existingOrder.delivery_user_id) {
-    throw new AppError(400, 'Assign a delivery user before updating this delivery status.');
   }
 
   const updates = {
@@ -789,7 +736,7 @@ router.patch('/:id/delivery-status', requireRole('Admin', 'User'), validate(idPa
 
 router.patch('/:id/delivery-assignment', requireAdmin, validate(idParamSchema, 'params'), validate(deliveryAssignmentSchema), asyncHandler(async (req, res) => {
   const orderId = Number(req.params.id);
-  const { delivery_date, delivery_user_id } = req.body;
+  const { delivery_date } = req.body;
   const parsedDeliveryDate = parseDeliveryDate(delivery_date);
 
   if (!parsedDeliveryDate) {
@@ -815,14 +762,12 @@ router.patch('/:id/delivery-assignment', requireAdmin, validate(idParamSchema, '
       throw new AppError(400, 'Delivered or cancelled orders cannot be reassigned.');
     }
 
-    await ensureAssignableDeliveryUser(tx, delivery_user_id);
-
     const [order] = await tx
       .update(orders)
       .set({
         delivery_date: parsedDeliveryDate,
-        delivery_user_id,
-        delivery_status: DELIVERY_STATUSES.scheduled,
+        delivery_user_id: null,
+        delivery_status: DELIVERY_STATUSES.pending,
         delivered_at: null,
         delivered_by: null,
       })
