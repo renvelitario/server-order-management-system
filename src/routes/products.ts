@@ -64,7 +64,7 @@ router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
   }));
 }));
 
-router.get('/id/:id', requireRole('Admin', 'User'), validate(idParamSchema, 'params'), asyncHandler(async (req, res) => {
+router.get('/:id', requireRole('Admin', 'User'), validate(idParamSchema, 'params'), asyncHandler(async (req, res) => {
   const productId = Number(req.params.id);
   const product = await db.select().from(products).where(eq(products.product_id, productId));
   if (!product.length) {
@@ -101,7 +101,7 @@ router.post('/', requireAdmin, validate(productPayloadSchema), asyncHandler(asyn
   res.status(201).json(newProduct);
 }));
 
-router.put('/id/:id', requireAdmin, validate(idParamSchema, 'params'), validate(productPayloadSchema), asyncHandler(async (req, res) => {
+router.put('/:id', requireAdmin, validate(idParamSchema, 'params'), validate(productPayloadSchema), asyncHandler(async (req, res) => {
   const productId = Number(req.params.id);
   const payload = req.body as {
     sku?: string;
@@ -139,7 +139,7 @@ router.put('/id/:id', requireAdmin, validate(idParamSchema, 'params'), validate(
   res.json(updatedProduct);
 }));
 
-router.delete('/id/:id', requireAdmin, validate(idParamSchema, 'params'), asyncHandler(async (req, res) => {
+router.delete('/:id', requireAdmin, validate(idParamSchema, 'params'), asyncHandler(async (req, res) => {
   const productId = Number(req.params.id);
 
   const productRows = await db

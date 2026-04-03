@@ -67,7 +67,7 @@ export const logPaginationDebug = ({
 }: {
   route: string;
   query: unknown;
-  parsed: { page: number; limit: number; offset: number; sort: SortDirection; search?: string };
+  parsed: { page: number; limit: number; offset: number; sort: SortDirection; search?: string } & Record<string, unknown>;
   enabled?: boolean;
 }) => {
   if (!enabled) {
