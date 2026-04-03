@@ -28,7 +28,7 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
     }
 
     if (String(localUser.status || '').toLowerCase() !== ACTIVE_STATUS) {
-      return res.status(403).json({ error: 'Account is not active.' });
+      return res.status(403).json({ error: 'Your account has been disabled. Please contact your organization admin to activate your account.' });
     }
 
     req.user = user;

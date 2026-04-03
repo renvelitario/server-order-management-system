@@ -1,10 +1,10 @@
 import express from 'express';
 import { db } from '../db/db.js';
 import { users } from '../db/schema.js';
-import { asc, desc, ilike, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, ilike, sql } from 'drizzle-orm';
 import { requireAuth } from '../middleware/auth.js';
 import { requireAdmin } from '../middleware/rbac.js';
-import { asyncHandler } from '../utils/errors.js';
+import { AppError, asyncHandler } from '../utils/errors.js';
 import { buildPaginatedResponse, logPaginationDebug, parseListQuery } from '../utils/pagination.js';
 
 const router = express.Router();
@@ -13,15 +13,30 @@ router.use(requireAdmin);
 
 router.get('/', asyncHandler(async (req, res) => {
   const { page, limit, offset, sort, search } = parseListQuery(req.query);
+  const accountTypeFilterRaw = typeof req.query.acc_type === 'string' ? req.query.acc_type.trim() : '';
+  const accountTypeFilter = accountTypeFilterRaw || undefined;
+
+  if (accountTypeFilter && accountTypeFilter !== 'Admin' && accountTypeFilter !== 'User') {
+    throw new AppError(400, 'Invalid account type filter.');
+  }
+
   const sortDirection = sort === 'asc' ? asc(users.user_id) : desc(users.user_id);
-  const whereClause = search
-    ? ilike(users.username, `%${search}%`)
-    : undefined;
+  const conditions = [];
+
+  if (search) {
+    conditions.push(ilike(users.username, `%${search}%`));
+  }
+
+  if (accountTypeFilter) {
+    conditions.push(eq(users.acc_type, accountTypeFilter));
+  }
+
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
   logPaginationDebug({
     route: 'users.list',
     query: req.query,
-    parsed: { page, limit, offset, sort, search },
+    parsed: { page, limit, offset, sort, search, acc_type: accountTypeFilter },
   });
 
   const [allUsers, totalRows] = await Promise.all([

@@ -164,15 +164,79 @@ router.post('/change-password', requireAuth, validate(changePasswordSchema), asy
 
 router.patch('/users/:id', requireAuth, requireAdmin, validate(idParamSchema, 'params'), validate(updateUserByAdminSchema), asyncHandler(async (req, res) => {
   const userId = Number(req.params.id);
+  const localAdminUserId = Number(req.localUser?.user_id);
+  const {
+    email,
+    username,
+    acc_type,
+    status,
+    new_password,
+  } = req.body;
 
-  const [updatedUser] = await db.update(users)
-    .set(req.body)
+  const [targetUser] = await db.select(publicUserColumns)
+    .from(users)
     .where(eq(users.user_id, userId))
-    .returning(publicUserColumns);
+    .limit(1);
 
-  if (!updatedUser) {
+  if (!targetUser) {
     throw new AppError(404, 'User not found.');
   }
+
+  if (targetUser.acc_type === 'Admin' && targetUser.user_id !== localAdminUserId) {
+    throw new AppError(403, 'Co-admin accounts cannot be modified.');
+  }
+
+  if (email && email !== targetUser.email) {
+    const duplicate = await db
+      .select({ user_id: users.user_id })
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1);
+
+    if (duplicate.length && duplicate[0].user_id !== targetUser.user_id) {
+      throw new AppError(409, 'Email already exists.');
+    }
+
+    const { error: updateEmailError } = await supabaseAdmin.auth.admin.updateUserById(targetUser.supabase_id, {
+      email,
+    });
+
+    if (updateEmailError) {
+      throw new AppError(400, 'Unable to update email.');
+    }
+  }
+
+  if (new_password) {
+    const { error: updatePasswordError } = await supabaseAdmin.auth.admin.updateUserById(targetUser.supabase_id, {
+      password: new_password,
+    });
+
+    if (updatePasswordError) {
+      throw new AppError(400, 'Unable to update password.');
+    }
+  }
+
+  const localUpdatePayload = {
+    ...(email ? { email } : {}),
+    ...(username ? { username } : {}),
+    ...(acc_type ? { acc_type } : {}),
+    ...(status ? { status } : {}),
+  };
+
+  if (!Object.keys(localUpdatePayload).length) {
+    const [freshUser] = await db.select(publicUserColumns)
+      .from(users)
+      .where(eq(users.user_id, userId))
+      .limit(1);
+
+    res.json(freshUser);
+    return;
+  }
+
+  const [updatedUser] = await db.update(users)
+    .set(localUpdatePayload)
+    .where(eq(users.user_id, userId))
+    .returning(publicUserColumns);
 
   res.json(updatedUser);
 }));
