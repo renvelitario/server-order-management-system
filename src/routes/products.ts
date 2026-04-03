@@ -119,7 +119,6 @@ router.post('/', requireAdmin, validate(productPayloadSchema), asyncHandler(asyn
   const payload = req.body as {
     sku?: string;
     product_name: string;
-    quantity?: number;
     price: number;
     status: string;
   };
@@ -129,7 +128,7 @@ router.post('/', requireAdmin, validate(productPayloadSchema), asyncHandler(asyn
   const [newProduct] = await db.insert(products).values({
     sku,
     product_name: payload.product_name,
-    quantity: Number(payload.quantity ?? 0),
+    quantity: 0,
     price: payload.price,
     status: payload.status,
   }).returning();
@@ -142,7 +141,6 @@ router.put('/:id', requireAdmin, validate(idParamSchema, 'params'), validate(pro
   const payload = req.body as {
     sku?: string;
     product_name: string;
-    quantity?: number;
     price: number;
     status: string;
   };
@@ -172,7 +170,7 @@ router.put('/:id', requireAdmin, validate(idParamSchema, 'params'), validate(pro
   const [updatedProduct] = await db.update(products).set({
     sku: nextSku,
     product_name: payload.product_name,
-    quantity: Number(payload.quantity ?? existing.quantity),
+    quantity: existing.quantity,
     price: payload.price,
     status: payload.status,
   }).where(eq(products.product_id, productId)).returning();

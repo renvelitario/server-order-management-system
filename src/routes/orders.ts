@@ -28,7 +28,7 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 type OrderPayload = {
   customer_id: number;
   delivery_date?: string;
-  items_data: Array<{ product_id: number; quantity: number }>;
+  items_data: Array<{ product_id: number; quantity: number; price: number }>;
 };
 
 const parseDeliveryDate = (value) => {
@@ -125,7 +125,11 @@ router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
   const { page, limit, offset, sort, search } = parseListQuery(req.query);
   const sortDirection = sort === 'asc' ? asc(orders.order_id) : desc(orders.order_id);
   const whereClause = search
-    ? sql`(${orders.order_id}::text ILIKE ${`%${search}%`} OR ${orders.customer_id}::text ILIKE ${`%${search}%`})`
+    ? sql`(
+      ${orders.order_id}::text ILIKE ${`%${search}%`}
+      OR ${orders.customer_id}::text ILIKE ${`%${search}%`}
+      OR ${customers.name} ILIKE ${`%${search}%`}
+    )`
     : undefined;
 
   logPaginationDebug({
@@ -140,6 +144,7 @@ router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
       .select({
         order_id: orders.order_id,
         customer_id: orders.customer_id,
+        customer_name: customers.name,
         order_date: orders.order_date,
         delivery_date: orders.delivery_date,
         delivery_status: orders.delivery_status,
@@ -147,11 +152,16 @@ router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
         delivered_by: orders.delivered_by,
       })
       .from(orders)
+      .leftJoin(customers, eq(orders.customer_id, customers.customer_id))
       .where(whereClause)
       .orderBy(sortDirection)
       .limit(limit)
       .offset(offset),
-    db.select({ count: sql`count(*)::int` }).from(orders).where(whereClause),
+    db
+      .select({ count: sql`count(*)::int` })
+      .from(orders)
+      .leftJoin(customers, eq(orders.customer_id, customers.customer_id))
+      .where(whereClause),
   ]);
 
   const orderIds = ordersPage.map((order) => order.order_id);
@@ -309,10 +319,6 @@ router.post('/', requireAdmin, validate(orderPayloadSchema), asyncHandler(async 
   const { customer_id, items_data, delivery_date } = req.body as OrderPayload;
   const utcOffsetMinutes = parseClientUtcOffsetMinutes(req);
   const uniqueProductIds: number[] = [...new Set(items_data.map((item) => item.product_id))];
-  const quantityByProduct = items_data.reduce((acc, item) => {
-    acc.set(item.product_id, (acc.get(item.product_id) || 0) + Number(item.quantity));
-    return acc;
-  }, new Map());
 
   const result = await db.transaction(async (tx) => {
     const customerRows = await tx
@@ -328,8 +334,6 @@ router.post('/', requireAdmin, validate(orderPayloadSchema), asyncHandler(async 
     const productRows = await tx
       .select({
         product_id: products.product_id,
-        quantity: products.quantity,
-        price: products.price,
         status: products.status,
       })
       .from(products)
@@ -345,11 +349,6 @@ router.post('/', requireAdmin, validate(orderPayloadSchema), asyncHandler(async 
 
       if (String(product.status).toLowerCase() !== 'active') {
         throw new AppError(400, `Product ${productId} is not active.`);
-      }
-
-      const requestedQty = quantityByProduct.get(productId) || 0;
-      if (Number(product.quantity) < requestedQty) {
-        throw new AppError(409, `Insufficient quantity for product ${productId}.`);
       }
     }
 
@@ -368,23 +367,14 @@ router.post('/', requireAdmin, validate(orderPayloadSchema), asyncHandler(async 
     const createdItems = [];
 
     for (const item of items_data) {
-      const product = productById.get(item.product_id);
       const [createdItem] = await tx.insert(orderItems).values({
         order_id: newOrder.order_id,
         product_id: item.product_id,
         quantity: item.quantity,
-        price: product.price,
+        price: item.price,
       }).returning();
 
       createdItems.push(createdItem);
-    }
-
-    for (const [productId, requestedQty] of quantityByProduct.entries()) {
-      const product = productById.get(productId);
-      await tx
-        .update(products)
-        .set({ quantity: Number(product.quantity) - requestedQty })
-        .where(eq(products.product_id, productId));
     }
 
     const totalAmount = createdItems.reduce((sum, item) => sum + (Number(item.quantity) * Number(item.price)), 0);
@@ -402,10 +392,6 @@ router.put('/:id', requireAdmin, validate(idParamSchema, 'params'), validate(ord
   const orderId = Number(req.params.id);
   const { customer_id, items_data, delivery_date } = req.body as OrderPayload;
   const uniqueProductIds: number[] = [...new Set(items_data.map((item) => item.product_id))];
-  const requestedByProduct = items_data.reduce((acc, item) => {
-    acc.set(item.product_id, (acc.get(item.product_id) || 0) + Number(item.quantity));
-    return acc;
-  }, new Map<number, number>());
 
   const result = await db.transaction(async (tx) => {
     const existingOrderRows = await tx
@@ -434,41 +420,17 @@ router.put('/:id', requireAdmin, validate(idParamSchema, 'params'), validate(ord
       throw new AppError(404, `Customer ${customer_id} not found.`);
     }
 
-    const existingItems = await tx
-      .select({ product_id: orderItems.product_id, quantity: orderItems.quantity })
-      .from(orderItems)
-      .where(eq(orderItems.order_id, orderId));
-
-    const restoreByProduct = existingItems.reduce((acc, item) => {
-      acc.set(item.product_id, (acc.get(item.product_id) || 0) + Number(item.quantity));
-      return acc;
-    }, new Map<number, number>());
-
-    const allProductIds = [...new Set([...restoreByProduct.keys(), ...uniqueProductIds])];
-    const productRows = allProductIds.length
+    const productRows = uniqueProductIds.length
       ? await tx
           .select({
             product_id: products.product_id,
-            quantity: products.quantity,
-            price: products.price,
             status: products.status,
           })
           .from(products)
-          .where(inArray(products.product_id, allProductIds))
+          .where(inArray(products.product_id, uniqueProductIds))
       : [];
 
     const productById = new Map(productRows.map((row) => [row.product_id, row]));
-    const effectiveQuantityByProduct = new Map<number, number>();
-
-    for (const productId of allProductIds) {
-      const product = productById.get(productId);
-      if (!product) {
-        throw new AppError(404, `Product ${productId} not found.`);
-      }
-
-      const restored = restoreByProduct.get(productId) || 0;
-      effectiveQuantityByProduct.set(productId, Number(product.quantity) + restored);
-    }
 
     for (const productId of uniqueProductIds) {
       const product = productById.get(productId);
@@ -479,15 +441,6 @@ router.put('/:id', requireAdmin, validate(idParamSchema, 'params'), validate(ord
       if (String(product.status).toLowerCase() !== 'active') {
         throw new AppError(400, `Product ${productId} is not active.`);
       }
-
-      const requestedQty = requestedByProduct.get(productId) || 0;
-      const availableQty = effectiveQuantityByProduct.get(productId) || 0;
-
-      if (availableQty < requestedQty) {
-        throw new AppError(409, `Insufficient quantity for product ${productId}.`);
-      }
-
-      effectiveQuantityByProduct.set(productId, availableQty - requestedQty);
     }
 
     const parsedDeliveryDate = parseDeliveryDate(delivery_date);
@@ -510,25 +463,17 @@ router.put('/:id', requireAdmin, validate(idParamSchema, 'params'), validate(ord
 
     const updatedItems = [];
     for (const item of items_data) {
-      const product = productById.get(item.product_id);
       const [createdItem] = await tx
         .insert(orderItems)
         .values({
           order_id: orderId,
           product_id: item.product_id,
           quantity: item.quantity,
-          price: product?.price,
+          price: item.price,
         })
         .returning();
 
       updatedItems.push(createdItem);
-    }
-
-    for (const [productId, nextQty] of effectiveQuantityByProduct.entries()) {
-      await tx
-        .update(products)
-        .set({ quantity: nextQty })
-        .where(eq(products.product_id, productId));
     }
 
     const totalAmount = updatedItems.reduce((sum, item) => sum + (Number(item.quantity) * Number(item.price)), 0);
