@@ -149,6 +149,51 @@ const parseClientUtcOffsetMinutes = (req) => {
   return parsed;
 };
 
+const parseDeliveryDateRangeFilter = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+
+  if (!normalized || normalized === 'all_time') {
+    return 'all_time';
+  }
+
+  if (['weekly', 'monthly', 'yearly'].includes(normalized)) {
+    return normalized;
+  }
+
+  throw new AppError(400, 'Invalid delivery date range filter.');
+};
+
+const resolveDeliveryDateRange = (range) => {
+  if (!range || range === 'all_time') {
+    return null;
+  }
+
+  const now = new Date();
+  let start = new Date(now);
+  let end = new Date(now);
+
+  if (range === 'weekly') {
+    const day = start.getDay();
+    const diffToMonday = day === 0 ? -6 : 1 - day;
+    start.setDate(start.getDate() + diffToMonday);
+    start.setHours(0, 0, 0, 0);
+
+    end = new Date(start);
+    end.setDate(end.getDate() + 7);
+    return { start, end };
+  }
+
+  if (range === 'monthly') {
+    start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+    end = new Date(now.getFullYear(), now.getMonth() + 1, 1, 0, 0, 0, 0);
+    return { start, end };
+  }
+
+  start = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0);
+  end = new Date(now.getFullYear() + 1, 0, 1, 0, 0, 0, 0);
+  return { start, end };
+};
+
 const isTodayDeliveryDate = (value, utcOffsetMinutes = null) => {
   if (!value) {
     return false;
@@ -254,11 +299,18 @@ router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
 router.get('/delivery/admin', requireAdmin, asyncHandler(async (req, res) => {
   const { page, limit, offset, sort, search } = parseListQuery(req.query);
   const requestedStatus = assertValidDeliveryStatus(req.query.delivery_status);
+  const dateRangeFilter = parseDeliveryDateRangeFilter(req.query.date_range);
   const sortDirection = sort === 'asc' ? asc(orders.order_id) : desc(orders.order_id);
   const filters = [];
 
   if (requestedStatus) {
     filters.push(eq(orders.delivery_status, requestedStatus));
+  }
+
+  const resolvedDateRange = resolveDeliveryDateRange(dateRangeFilter);
+  if (resolvedDateRange) {
+    filters.push(gte(orders.delivery_date, resolvedDateRange.start));
+    filters.push(lt(orders.delivery_date, resolvedDateRange.end));
   }
 
   if (search) {
