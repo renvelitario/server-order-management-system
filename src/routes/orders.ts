@@ -236,9 +236,20 @@ router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
   ]);
 
   const orderIds = ordersPage.map((order) => order.order_id);
-  const pageItems = orderIds.length
-    ? await db.select().from(orderItems).where(inArray(orderItems.order_id, orderIds))
-    : [];
+    const pageItems = orderIds.length
+      ? await db
+          .select({
+            order_id: orderItems.order_id,
+            product_id: orderItems.product_id,
+            sku: products.sku,
+            quantity: orderItems.quantity,
+            price: orderItems.price,
+            product_name: products.product_name,
+          })
+          .from(orderItems)
+          .leftJoin(products, eq(orderItems.product_id, products.product_id))
+          .where(inArray(orderItems.order_id, orderIds))
+      : [];
 
   const itemsByOrderId = pageItems.reduce((acc, item) => {
     const key = item.order_id;
@@ -482,7 +493,17 @@ router.get('/:id', requireRole('Admin', 'User'), validate(idParamSchema, 'params
     throw new AppError(404, 'Order not found.');
   }
 
-  const items = await db.select().from(orderItems).where(eq(orderItems.order_id, order[0].order_id));
+  const items = await db
+    .select({
+      product_id: orderItems.product_id,
+      sku: products.sku,
+      quantity: orderItems.quantity,
+      price: orderItems.price,
+      product_name: products.product_name,
+    })
+    .from(orderItems)
+    .leftJoin(products, eq(orderItems.product_id, products.product_id))
+    .where(eq(orderItems.order_id, order[0].order_id));
   const totalAmount = items.reduce((sum, item) => sum + (Number(item.quantity) * Number(item.price)), 0);
 
   res.json({
