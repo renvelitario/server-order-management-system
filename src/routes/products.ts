@@ -1,5 +1,4 @@
 import express from 'express';
-import { randomInt } from 'node:crypto';
 import { db } from '../db/db.js';
 import { products, orderItems } from '../db/schema.js';
 import { asc, desc, eq, ilike, or, sql } from 'drizzle-orm';
@@ -10,57 +9,10 @@ import { validate } from '../middleware/validate.js';
 import { idParamSchema, skuParamSchema } from '../validators/common.js';
 import { productPayloadSchema } from '../validators/entity.js';
 import { buildPaginatedResponse, logPaginationDebug, parseListQuery } from '../utils/pagination.js';
+import { ensureUniqueSku, normalizeSku, resolveSkuForCreate } from '../utils/sku.js';
 
 const router = express.Router();
 router.use(requireAuth);
-
-const SKU_LENGTH = 13;
-const SKU_CHARSET = '0123456789';
-
-const normalizeSku = (value) => String(value || '').trim().toUpperCase();
-
-const generateRandomSku = () => {
-  let sku = '';
-  for (let index = 0; index < SKU_LENGTH; index += 1) {
-    const next = randomInt(SKU_CHARSET.length);
-    sku += SKU_CHARSET[next];
-  }
-  return sku;
-};
-
-const ensureUniqueSku = async (candidateSku: string) => {
-  const normalized = normalizeSku(candidateSku);
-
-  const existing = await db
-    .select({ sku: products.sku })
-    .from(products)
-    .where(eq(products.sku, normalized))
-    .limit(1);
-
-  return existing.length === 0;
-};
-
-const resolveSkuForCreate = async (requestedSku?: string) => {
-  const normalizedRequested = normalizeSku(requestedSku);
-
-  if (normalizedRequested) {
-    const available = await ensureUniqueSku(normalizedRequested);
-    if (!available) {
-      throw new AppError(409, 'SKU already exists. Please choose a different SKU.');
-    }
-    return normalizedRequested;
-  }
-
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    const generated = generateRandomSku();
-    const available = await ensureUniqueSku(generated);
-    if (available) {
-      return generated;
-    }
-  }
-
-  throw new AppError(500, 'Unable to generate a unique SKU. Please try again.');
-};
 
 router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
   const { page, limit, offset, sort, search } = parseListQuery(req.query);

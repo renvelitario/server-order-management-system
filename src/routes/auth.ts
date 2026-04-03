@@ -6,6 +6,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { requireAdmin } from '../middleware/rbac.js';
 import { asyncHandler, AppError } from '../utils/errors.js';
 import { validate } from '../middleware/validate.js';
+import { getLocalUserByAuthUser, publicUserColumns } from '../utils/authUser.js';
 import {
   changePasswordSchema,
   registerUserSchema,
@@ -20,16 +21,6 @@ const DEFAULT_INACTIVITY_MINUTES = 60;
 const MIN_INACTIVITY_MINUTES = 10;
 const MAX_INACTIVITY_MINUTES = 480;
 
-const publicUserColumns = {
-  user_id: users.user_id,
-  email: users.email,
-  username: users.username,
-  acc_type: users.acc_type,
-  status: users.status,
-  inactivity_timeout_minutes: users.inactivity_timeout_minutes,
-  supabase_id: users.supabase_id
-};
-
 const normalizeInactivityTimeout = (value) => {
   const parsedValue = Number(value);
 
@@ -38,16 +29,6 @@ const normalizeInactivityTimeout = (value) => {
   }
 
   return Math.min(MAX_INACTIVITY_MINUTES, Math.max(MIN_INACTIVITY_MINUTES, Math.round(parsedValue)));
-};
-
-const getLocalUserByAuthUser = async (authUser) => {
-  let localUser = await db.select(publicUserColumns).from(users).where(eq(users.supabase_id, authUser.id)).limit(1);
-
-  if (!localUser.length) {
-    localUser = await db.select(publicUserColumns).from(users).where(eq(users.email, authUser.email)).limit(1);
-  }
-
-  return localUser[0] || null;
 };
 
 router.post('/register', requireAuth, requireAdmin, validate(registerUserSchema), asyncHandler(async (req, res) => {

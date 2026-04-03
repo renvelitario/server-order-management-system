@@ -1,32 +1,8 @@
 import type { NextFunction, Request, Response } from 'express';
 import { supabaseAdmin } from '../db/db.js';
-import { db } from '../db/db.js';
-import { users } from '../db/schema.js';
-import { eq, or } from 'drizzle-orm';
-import type { AuthUser, LocalUser } from '../types/auth.js';
+import { getLocalUserByAuthUser } from '../utils/authUser.js';
 
 const ACTIVE_STATUS = 'active';
-
-const findLocalUser = async (authUser: AuthUser): Promise<LocalUser | null> => {
-  const byIdentity = await db
-    .select({
-      user_id: users.user_id,
-      email: users.email,
-      username: users.username,
-      acc_type: users.acc_type,
-      status: users.status,
-      inactivity_timeout_minutes: users.inactivity_timeout_minutes,
-      supabase_id: users.supabase_id,
-    })
-    .from(users)
-    .where(or(
-      eq(users.supabase_id, authUser.id),
-      eq(users.email, authUser.email),
-    ))
-    .limit(1);
-
-  return byIdentity[0] || null;
-};
 
 export const requireAuth = async (req: Request, res: Response, next: NextFunction): Promise<void | Response> => {
   try {
@@ -46,7 +22,7 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
       return res.status(401).json({ error: 'Invalid or expired token.' });
     }
 
-    const localUser = await findLocalUser(user);
+    const localUser = await getLocalUserByAuthUser(user);
     if (!localUser) {
       return res.status(403).json({ error: 'Account is not provisioned.' });
     }

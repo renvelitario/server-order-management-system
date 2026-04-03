@@ -78,7 +78,7 @@ router.get('/summary', asyncHandler(async (req, res) => {
   const filteredOrderIds = new Set(filteredOrders.map((order) => order.order_id));
   const relevantItems = filteredOrderIds.size
     ? await db
-      .select({ order_id: orderItems.order_id, sku: orderItems.sku, quantity: orderItems.quantity, price: orderItems.price })
+      .select({ order_id: orderItems.order_id, product_id: orderItems.product_id, quantity: orderItems.quantity, price: orderItems.price })
       .from(orderItems)
       .where(inArray(orderItems.order_id, [...filteredOrderIds]))
     : [];
@@ -115,26 +115,26 @@ router.get('/summary', asyncHandler(async (req, res) => {
 
   const productSales = new Map();
   relevantItems.forEach((item) => {
-    productSales.set(item.sku, (productSales.get(item.sku) || 0) + Number(item.quantity));
+    productSales.set(item.product_id, (productSales.get(item.product_id) || 0) + Number(item.quantity));
   });
 
   const topProductEntries = [...productSales.entries()]
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5);
 
-  const topSkus = topProductEntries.map(([sku]) => sku);
-  const topProductRows = topSkus.length
+  const topProductIds = topProductEntries.map(([productId]) => productId);
+  const topProductRows = topProductIds.length
     ? await db
-      .select({ sku: products.sku, product_name: products.product_name })
+      .select({ product_id: products.product_id, sku: products.sku, product_name: products.product_name })
       .from(products)
-      .where(inArray(products.sku, topSkus))
+      .where(inArray(products.product_id, topProductIds))
     : [];
 
-  const productNameBySku = new Map(topProductRows.map((entry) => [entry.sku, entry.product_name]));
+  const productById = new Map(topProductRows.map((entry) => [entry.product_id, { sku: entry.sku, product_name: entry.product_name }]));
 
-  const topProducts = topProductEntries.map(([sku, soldQuantity]) => ({
-    sku,
-    product_name: productNameBySku.get(sku) || sku,
+  const topProducts = topProductEntries.map(([productId, soldQuantity]) => ({
+    sku: productById.get(productId)?.sku || String(productId),
+    product_name: productById.get(productId)?.product_name || `Product #${productId}`,
     sold_quantity: soldQuantity,
   }));
 
@@ -205,19 +205,19 @@ router.get('/recent-orders', asyncHandler(async (req, res) => {
   const customerIds = [...new Set(latestOrders.map((entry) => entry.customer_id))];
   const [items, customersList] = await Promise.all([
     orderIds.length
-      ? db.select({ order_id: orderItems.order_id, sku: orderItems.sku, quantity: orderItems.quantity, price: orderItems.price }).from(orderItems).where(inArray(orderItems.order_id, orderIds))
+      ? db.select({ order_id: orderItems.order_id, product_id: orderItems.product_id, quantity: orderItems.quantity, price: orderItems.price }).from(orderItems).where(inArray(orderItems.order_id, orderIds))
       : Promise.resolve([]),
     customerIds.length
       ? db.select({ customer_id: customers.customer_id, name: customers.name }).from(customers).where(inArray(customers.customer_id, customerIds))
       : Promise.resolve([]),
   ]);
 
-  const skus = [...new Set(items.map((item) => item.sku))];
-  const productsList = skus.length
-    ? await db.select({ sku: products.sku, product_name: products.product_name }).from(products).where(inArray(products.sku, skus))
+  const productIds = [...new Set(items.map((item) => item.product_id))];
+  const productsList = productIds.length
+    ? await db.select({ product_id: products.product_id, sku: products.sku, product_name: products.product_name }).from(products).where(inArray(products.product_id, productIds))
     : [];
 
-  const productBySku = new Map(productsList.map((entry) => [entry.sku, entry.product_name]));
+  const productById = new Map(productsList.map((entry) => [entry.product_id, { sku: entry.sku, product_name: entry.product_name }]));
   const customerById = new Map(customersList.map((entry) => [entry.customer_id, entry.name]));
 
   const itemsByOrder = items.reduce((acc, item) => {
@@ -235,7 +235,8 @@ router.get('/recent-orders', asyncHandler(async (req, res) => {
       ...order,
       items: orderItemsList.map((item) => ({
         ...item,
-        product_name: productBySku.get(item.sku) || item.sku,
+        sku: productById.get(item.product_id)?.sku || String(item.product_id),
+        product_name: productById.get(item.product_id)?.product_name || `Product #${item.product_id}`,
       })),
       customer_name: customerById.get(order.customer_id) || `Customer #${order.customer_id}`,
       total_amount: totalAmount,
