@@ -100,7 +100,7 @@ const deliveryTransitionMap = {
   [DELIVERY_STATUSES.pending]: new Set([DELIVERY_STATUSES.out_for_delivery, DELIVERY_STATUSES.cancelled]),
   [DELIVERY_STATUSES.out_for_delivery]: new Set([DELIVERY_STATUSES.delivered, DELIVERY_STATUSES.failed]),
   [DELIVERY_STATUSES.failed]: new Set([DELIVERY_STATUSES.pending, DELIVERY_STATUSES.cancelled]),
-  [DELIVERY_STATUSES.delivered]: new Set(),
+  [DELIVERY_STATUSES.delivered]: new Set([DELIVERY_STATUSES.out_for_delivery]),
   [DELIVERY_STATUSES.cancelled]: new Set(),
 };
 
