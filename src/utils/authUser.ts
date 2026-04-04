@@ -7,6 +7,7 @@ export const publicUserColumns = {
   user_id: users.user_id,
   email: users.email,
   username: users.username,
+  name: users.name,
   acc_type: users.acc_type,
   status: users.status,
   inactivity_timeout_minutes: users.inactivity_timeout_minutes,

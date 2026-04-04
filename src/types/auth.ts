@@ -4,6 +4,7 @@ export interface LocalUser {
   user_id: number;
   email: string;
   username: string;
+  name: string;
   acc_type: 'Admin' | 'User' | string;
   status: 'Active' | 'Disabled' | 'Suspended' | string;
   inactivity_timeout_minutes: number;

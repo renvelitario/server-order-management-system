@@ -1,7 +1,7 @@
 import express from 'express';
 import { db } from '../db/db.js';
 import { users } from '../db/schema.js';
-import { and, asc, desc, eq, ilike, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, ilike, or, sql } from 'drizzle-orm';
 import { requireAuth } from '../middleware/auth.js';
 import { requireAdmin } from '../middleware/rbac.js';
 import { AppError, asyncHandler } from '../utils/errors.js';
@@ -24,7 +24,14 @@ router.get('/', asyncHandler(async (req, res) => {
   const conditions = [];
 
   if (search) {
-    conditions.push(ilike(users.username, `%${search}%`));
+    conditions.push(or(
+      sql`${users.user_id}::text ILIKE ${`%${search}%`}`,
+      ilike(users.username, `%${search}%`),
+      ilike(users.name, `%${search}%`),
+      ilike(users.email, `%${search}%`),
+      ilike(users.acc_type, `%${search}%`),
+      ilike(users.status, `%${search}%`),
+    ));
   }
 
   if (accountTypeFilter) {
@@ -44,6 +51,7 @@ router.get('/', asyncHandler(async (req, res) => {
       user_id: users.user_id,
       email: users.email,
       username: users.username,
+      name: users.name,
       acc_type: users.acc_type,
       status: users.status,
       inactivity_timeout_minutes: users.inactivity_timeout_minutes,

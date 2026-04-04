@@ -216,6 +216,19 @@ router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
       ${orders.order_id}::text ILIKE ${`%${search}%`}
       OR ${orders.customer_id}::text ILIKE ${`%${search}%`}
       OR ${customers.name} ILIKE ${`%${search}%`}
+      OR ${orders.order_date}::text ILIKE ${`%${search}%`}
+      OR ${orders.delivery_date}::text ILIKE ${`%${search}%`}
+      OR ${orders.delivery_status} ILIKE ${`%${search}%`}
+      OR (
+        SELECT COUNT(*)::text
+        FROM ${orderItems}
+        WHERE ${orderItems.order_id} = ${orders.order_id}
+      ) ILIKE ${`%${search}%`}
+      OR (
+        SELECT COALESCE(SUM(${orderItems.quantity} * ${orderItems.price}), 0)::text
+        FROM ${orderItems}
+        WHERE ${orderItems.order_id} = ${orders.order_id}
+      ) ILIKE ${`%${search}%`}
     )`
     : undefined;
 
@@ -319,7 +332,19 @@ router.get('/delivery/admin', requireAdmin, asyncHandler(async (req, res) => {
       OR ${customers.name} ILIKE ${`%${search}%`}
       OR ${customers.address} ILIKE ${`%${search}%`}
       OR ${customers.contact_no} ILIKE ${`%${search}%`}
+      OR ${orders.order_date}::text ILIKE ${`%${search}%`}
+      OR ${orders.delivery_date}::text ILIKE ${`%${search}%`}
       OR ${orders.delivery_status} ILIKE ${`%${search}%`}
+      OR (
+        SELECT COUNT(*)::text
+        FROM ${orderItems}
+        WHERE ${orderItems.order_id} = ${orders.order_id}
+      ) ILIKE ${`%${search}%`}
+      OR (
+        SELECT COALESCE(SUM(${orderItems.quantity} * ${orderItems.price}), 0)::text
+        FROM ${orderItems}
+        WHERE ${orderItems.order_id} = ${orders.order_id}
+      ) ILIKE ${`%${search}%`}
     )`);
   }
 
@@ -408,6 +433,8 @@ router.get('/delivery/today', requireRole('Admin', 'User'), asyncHandler(async (
       OR ${customers.name} ILIKE ${`%${search}%`}
       OR ${customers.address} ILIKE ${`%${search}%`}
       OR ${customers.contact_no} ILIKE ${`%${search}%`}
+      OR ${orders.order_date}::text ILIKE ${`%${search}%`}
+      OR ${orders.delivery_date}::text ILIKE ${`%${search}%`}
       OR ${orders.delivery_status} ILIKE ${`%${search}%`}
     )`);
   }

@@ -1,7 +1,7 @@
 import express from 'express';
 import { db } from '../db/db.js';
 import { customers, orders } from '../db/schema.js';
-import { asc, desc, eq, ilike, sql } from 'drizzle-orm';
+import { asc, desc, eq, ilike, or, sql } from 'drizzle-orm';
 import { requireAuth } from '../middleware/auth.js';
 import { requireAdmin, requireRole } from '../middleware/rbac.js';
 import { asyncHandler, AppError } from '../utils/errors.js';
@@ -17,7 +17,12 @@ router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
   const { page, limit, offset, sort, search } = parseListQuery(req.query);
   const sortDirection = sort === 'asc' ? asc(customers.customer_id) : desc(customers.customer_id);
   const whereClause = search
-    ? ilike(customers.name, `%${search}%`)
+    ? or(
+      sql`${customers.customer_id}::text ILIKE ${`%${search}%`}`,
+      ilike(customers.name, `%${search}%`),
+      ilike(customers.address, `%${search}%`),
+      ilike(customers.contact_no, `%${search}%`),
+    )
     : undefined;
 
   logPaginationDebug({

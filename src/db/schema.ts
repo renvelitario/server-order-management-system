@@ -6,12 +6,15 @@ export const users = pgTable('ims_users', {
 	email: varchar('email', { length: 200 }).notNull(),
 	password: varchar('password', { length: 200 }), // can be null if relying purely on supabase provider, but keeping it for legacy support
 	username: varchar('username', { length: 200 }).notNull(),
+	name: varchar('name', { length: 200 }).notNull().default('User'),
+	phone_number: varchar('phone_number', { length: 20 }),
 	acc_type: varchar('acc_type', { length: 50 }).notNull().default('User'), // 'Admin' or 'User'
 	status: varchar('status', { length: 50 }).notNull().default('Active'), // 'Active' | 'Disabled' | 'Suspended'
 	inactivity_timeout_minutes: integer('inactivity_timeout_minutes').notNull().default(60),
 	supabase_id: varchar('supabase_id', { length: 255 }).notNull() // To link with auth.users
 }, (table) => ({
 	usersEmailUnique: uniqueIndex('ims_users_email_unique').on(table.email),
+	usersUsernameUnique: uniqueIndex('ims_users_username_unique').on(table.username),
 	usersSupabaseIdUnique: uniqueIndex('ims_users_supabase_id_unique').on(table.supabase_id),
 	usersAccTypeCheck: check('ims_users_acc_type_check', sql`${table.acc_type} IN ('Admin', 'User')`),
 	usersStatusCheck: check('ims_users_status_check', sql`${table.status} IN ('Active', 'Disabled', 'Suspended')`),

@@ -30,7 +30,13 @@ router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
   const { page, limit, offset, sort, search } = parseListQuery(req.query);
   const sortDirection = sort === 'asc' ? asc(products.sku) : desc(products.sku);
   const whereClause = search
-    ? or(ilike(products.product_name, `%${search}%`), ilike(products.sku, `%${search}%`))
+    ? or(
+      sql`${products.product_id}::text ILIKE ${`%${search}%`}`,
+      ilike(products.sku, `%${search}%`),
+      ilike(products.product_name, `%${search}%`),
+      sql`${products.price}::text ILIKE ${`%${search}%`}`,
+      ilike(products.status, `%${search}%`),
+    )
     : undefined;
 
   logPaginationDebug({

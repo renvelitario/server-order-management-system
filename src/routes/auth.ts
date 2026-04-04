@@ -1,13 +1,14 @@
 import express from 'express';
 import { supabaseAdmin, db } from '../db/db.js';
 import { users } from '../db/schema.js';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { requireAuth } from '../middleware/auth.js';
 import { requireAdmin } from '../middleware/rbac.js';
 import { asyncHandler, AppError } from '../utils/errors.js';
 import { validate } from '../middleware/validate.js';
 import { getLocalUserByAuthUser, publicUserColumns } from '../utils/authUser.js';
 import {
+  loginSchema,
   changePasswordSchema,
   registerUserSchema,
   updateProfileSchema,
@@ -31,12 +32,70 @@ const normalizeInactivityTimeout = (value) => {
   return Math.min(MAX_INACTIVITY_MINUTES, Math.max(MIN_INACTIVITY_MINUTES, Math.round(parsedValue)));
 };
 
+// Custom login endpoint that supports email, username, or phone
+router.post('/login', validate(loginSchema), asyncHandler(async (req, res) => {
+  const { identifier, password } = req.body;
+
+  // Determine if identifier is email, username, or phone
+  const isEmail = identifier.includes('@');
+  const isPhone = /^\d{7,}$/.test(identifier); // More robust phone detection
+  
+  let userEmail: string;
+
+  if (isEmail) {
+    userEmail = identifier;
+  } else {
+    // Look up user by username or phone to get their email
+    // For username, make it case-insensitive by converting to lowercase
+    const query = db.select({ email: users.email }).from(users);
+    
+    const whereClause = isPhone 
+      ? eq(users.phone_number, identifier)
+      : sql`LOWER(${users.username}) = LOWER(${identifier})`; // Case-insensitive username
+
+    const [user] = await query.where(whereClause).limit(1);
+
+    if (!user) {
+      console.warn(`Login failed: No user found for identifier: ${identifier} (isPhone: ${isPhone})`);
+      throw new AppError(401, 'Invalid credentials.');
+    }
+
+    userEmail = user.email;
+  }
+
+  console.log(`Login attempt for email: ${userEmail}`);
+
+  // Authenticate with Supabase using the email
+  const { data, error } = await supabaseAdmin.auth.signInWithPassword({
+    email: userEmail,
+    password,
+  });
+
+  if (error || !data?.session) {
+    console.error('Supabase auth error:', error?.message || 'No session returned');
+    throw new AppError(401, 'Invalid credentials.');
+  }
+
+  console.log(`Login successful for: ${userEmail}`);
+
+  res.json({
+    message: 'Login successful.',
+    session: data.session,
+    user: data.user,
+  });
+}));
+
 router.post('/register', requireAuth, requireAdmin, validate(registerUserSchema), asyncHandler(async (req, res) => {
-  const { username, email, password, acc_type, status } = req.body;
+  const { username, email, password, name, phone_number, acc_type, status } = req.body;
 
   const existingUser = await db.select({ user_id: users.user_id }).from(users).where(eq(users.email, email)).limit(1);
   if (existingUser.length) {
     throw new AppError(409, 'Email already exists.');
+  }
+
+  const existingUsername = await db.select({ user_id: users.user_id }).from(users).where(sql`LOWER(${users.username}) = LOWER(${username})`).limit(1);
+  if (existingUsername.length) {
+    throw new AppError(409, 'Username already exists.');
   }
 
   const { data, error } = await supabaseAdmin.auth.admin.createUser({
@@ -52,6 +111,8 @@ router.post('/register', requireAuth, requireAdmin, validate(registerUserSchema)
   const [newUser] = await db.insert(users).values({
     email,
     username,
+    name,
+    phone_number: phone_number || null,
     acc_type,
     status,
     inactivity_timeout_minutes: DEFAULT_INACTIVITY_MINUTES,
@@ -166,6 +227,7 @@ router.patch('/users/:id', requireAuth, requireAdmin, validate(idParamSchema, 'p
   const userId = Number(req.params.id);
   const localAdminUserId = Number(req.localUser?.user_id);
   const {
+      name,
     email,
     username,
     acc_type,
@@ -219,6 +281,7 @@ router.patch('/users/:id', requireAuth, requireAdmin, validate(idParamSchema, 'p
   const localUpdatePayload = {
     ...(email ? { email } : {}),
     ...(username ? { username } : {}),
+      ...(name ? { name } : {}),
     ...(acc_type ? { acc_type } : {}),
     ...(status ? { status } : {}),
   };

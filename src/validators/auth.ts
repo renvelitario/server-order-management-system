@@ -3,9 +3,16 @@ import { accountStatusSchema, accountTypeSchema } from './common.js';
 
 const passwordPolicyRegex = /^(?=.*[a-zA-Z])(?=.*\d).{8,}$/;
 
+export const loginSchema = z.object({
+  identifier: z.string().trim().min(1, 'Email, username, or phone is required'),
+  password: z.string().min(1, 'Password is required'),
+});
+
 export const registerUserSchema = z.object({
   email: z.string().trim().toLowerCase().email(),
   username: z.string().trim().min(2).max(200),
+  name: z.string().trim().min(2).max(200),
+  phone_number: z.string().trim().min(7).max(20).optional().or(z.literal('')),
   password: z.string().min(8).regex(passwordPolicyRegex, 'Password must be at least 8 characters and include letters and numbers.'),
   confirm_password: z.string().min(8),
   acc_type: accountTypeSchema.default('User'),
@@ -35,6 +42,7 @@ export const changePasswordSchema = z.object({
 });
 
 export const updateUserByAdminSchema = z.object({
+    name: z.string().trim().min(2).max(200).optional(),
   email: z.string().trim().toLowerCase().email().optional(),
   username: z.string().trim().min(2).max(200).optional(),
   acc_type: accountTypeSchema.optional(),
