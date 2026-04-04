@@ -28,7 +28,8 @@ const ensureUniqueSku = async (candidateSku: string): Promise<boolean> => {
 
 router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
   const { page, limit, offset, sort, search } = parseListQuery(req.query);
-  const statusQuery = typeof req.query.status === 'string' ? req.query.status.trim().toLowerCase() : undefined;
+  const rawStatusQuery = Array.isArray(req.query.status) ? req.query.status[0] : req.query.status;
+  const statusQuery = typeof rawStatusQuery === 'string' ? rawStatusQuery.trim().toLowerCase() : undefined;
   const statusFilter = statusQuery === 'active' || statusQuery === 'inactive' ? statusQuery : undefined;
   const sortDirection = sort === 'asc' ? asc(products.sku) : desc(products.sku);
   const conditions = [];
@@ -44,7 +45,7 @@ router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
   }
 
   if (statusFilter) {
-    conditions.push(eq(products.status, statusFilter));
+    conditions.push(sql`LOWER(TRIM(${products.status})) = ${statusFilter}`);
   }
 
   const whereClause = conditions.length > 1 ? and(...conditions) : conditions[0];
