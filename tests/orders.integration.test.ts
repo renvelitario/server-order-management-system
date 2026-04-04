@@ -75,6 +75,7 @@ describe('orders route integration', () => {
       .post('/api/orders')
       .send({
         customer_id: 2,
+        order_date: '2026-04-01',
         items_data: [{ product_id: 1, quantity: 3, price: 50 }],
       });
 

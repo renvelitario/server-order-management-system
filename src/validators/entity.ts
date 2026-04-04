@@ -18,6 +18,10 @@ const deliveryDateSchema = z.string().refine(isValidDateOnly, {
   message: 'Invalid delivery date. Use YYYY-MM-DD.',
 });
 
+const orderDateSchema = z.string().refine(isValidDateOnly, {
+  message: 'Invalid order date. Use YYYY-MM-DD.',
+});
+
 export const productPayloadSchema = z.object({
   sku: z.string().trim().toUpperCase().regex(/^[A-Z0-9]{8,32}$/, 'SKU must be 8-32 uppercase letters/numbers.').optional().or(z.literal('')),
   product_name: z.string().trim().min(2).max(300),
@@ -33,6 +37,7 @@ export const customerPayloadSchema = z.object({
 
 export const orderPayloadSchema = z.object({
   customer_id: z.coerce.number().int().positive(),
+  order_date: orderDateSchema,
   delivery_date: deliveryDateSchema.optional(),
   items_data: z.array(z.object({
     product_id: z.coerce.number().int().positive(),

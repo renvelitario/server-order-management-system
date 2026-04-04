@@ -36,7 +36,7 @@ type OrderPayload = {
 
 const parseOrderDate = (value) => {
   if (value == null || String(value).trim() === '') {
-    return new Date();
+    throw new AppError(400, 'Order date is required. Use YYYY-MM-DD.');
   }
 
   const raw = String(value).trim();
