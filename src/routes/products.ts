@@ -1,7 +1,7 @@
 import express from 'express';
 import { db } from '../db/db.js';
 import { products, orderItems } from '../db/schema.js';
-import { asc, desc, eq, ilike, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, ilike, or, sql } from 'drizzle-orm';
 import { requireAuth } from '../middleware/auth.js';
 import { requireAdmin, requireRole } from '../middleware/rbac.js';
 import { asyncHandler, AppError } from '../utils/errors.js';
@@ -28,21 +28,31 @@ const ensureUniqueSku = async (candidateSku: string): Promise<boolean> => {
 
 router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
   const { page, limit, offset, sort, search } = parseListQuery(req.query);
+  const statusQuery = typeof req.query.status === 'string' ? req.query.status.trim().toLowerCase() : undefined;
+  const statusFilter = statusQuery === 'active' || statusQuery === 'inactive' ? statusQuery : undefined;
   const sortDirection = sort === 'asc' ? asc(products.sku) : desc(products.sku);
-  const whereClause = search
-    ? or(
+  const conditions = [];
+
+  if (search) {
+    conditions.push(or(
       sql`${products.product_id}::text ILIKE ${`%${search}%`}`,
       ilike(products.sku, `%${search}%`),
       ilike(products.product_name, `%${search}%`),
       sql`${products.price}::text ILIKE ${`%${search}%`}`,
       ilike(products.status, `%${search}%`),
-    )
-    : undefined;
+    ));
+  }
+
+  if (statusFilter) {
+    conditions.push(eq(products.status, statusFilter));
+  }
+
+  const whereClause = conditions.length > 1 ? and(...conditions) : conditions[0];
 
   logPaginationDebug({
     route: 'products.list',
     query: req.query,
-    parsed: { page, limit, offset, sort, search },
+    parsed: { page, limit, offset, sort, search, status: statusFilter || 'all' },
   });
 
   const [rows, totalRows] = await Promise.all([
