@@ -1,6 +1,6 @@
 import express from 'express';
 import { db } from '../db/db.js';
-import { customers, orders, orderItems, products } from '../db/schema.js';
+import { customers, notifications, orders, orderItems, products } from '../db/schema.js';
 import { and, asc, desc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
 import { requireAuth } from '../middleware/auth.js';
 import { requireAdmin, requireRole } from '../middleware/rbac.js';
@@ -102,7 +102,7 @@ const deliveryTransitionMap = {
   [DELIVERY_STATUSES.unassigned]: new Set([DELIVERY_STATUSES.pending, DELIVERY_STATUSES.cancelled]),
   [DELIVERY_STATUSES.pending]: new Set([DELIVERY_STATUSES.out_for_delivery, DELIVERY_STATUSES.cancelled]),
   [DELIVERY_STATUSES.out_for_delivery]: new Set([DELIVERY_STATUSES.delivered, DELIVERY_STATUSES.failed]),
-  [DELIVERY_STATUSES.failed]: new Set([DELIVERY_STATUSES.pending, DELIVERY_STATUSES.cancelled]),
+  [DELIVERY_STATUSES.failed]: new Set([DELIVERY_STATUSES.pending, DELIVERY_STATUSES.out_for_delivery, DELIVERY_STATUSES.cancelled]),
   [DELIVERY_STATUSES.delivered]: new Set([DELIVERY_STATUSES.out_for_delivery]),
   [DELIVERY_STATUSES.cancelled]: new Set(),
 };
@@ -215,6 +215,85 @@ const formatDeliveryStatusLabel = (value: string): string => String(value || '')
   .replace(/_/g, ' ')
   .replace(/\b\w/g, (letter) => letter.toUpperCase());
 
+const DELIVERY_PENDING_START_TODAY_EVENT = 'delivery_pending_start_today';
+const DELIVERY_AUTO_FAILED_EVENT = 'delivery_auto_failed_overdue';
+
+const applyDeliveryAutomation = async (utcOffsetMinutes: number | null) => {
+  const { start, end } = resolveTodayRange(utcOffsetMinutes);
+
+  const overdueRows = await db
+    .update(orders)
+    .set({
+      delivery_status: DELIVERY_STATUSES.failed,
+      delivered_at: null,
+      delivered_by: null,
+    })
+    .where(and(
+      lt(orders.delivery_date, start),
+      inArray(orders.delivery_status, [DELIVERY_STATUSES.pending, DELIVERY_STATUSES.out_for_delivery]),
+    ))
+    .returning({
+      order_id: orders.order_id,
+    });
+
+  if (overdueRows.length) {
+    await Promise.all(overdueRows.map((row) => createNotificationsForRole({
+      role: 'Admin',
+      payload: {
+        eventType: DELIVERY_AUTO_FAILED_EVENT,
+        title: 'Overdue delivery auto-failed',
+        message: `Order #${row.order_id} was automatically moved to failed because its delivery date has passed.`,
+        orderId: row.order_id,
+      },
+    })));
+  }
+
+  const pendingTodayRows = await db
+    .select({
+      order_id: orders.order_id,
+    })
+    .from(orders)
+    .where(and(
+      eq(orders.delivery_status, DELIVERY_STATUSES.pending),
+      gte(orders.delivery_date, start),
+      lt(orders.delivery_date, end),
+    ));
+
+  if (!pendingTodayRows.length) {
+    return;
+  }
+
+  const pendingTodayOrderIds = pendingTodayRows.map((row) => row.order_id);
+  const alreadyNotifiedRows = await db
+    .select({
+      order_id: notifications.order_id,
+    })
+    .from(notifications)
+    .where(and(
+      eq(notifications.event_type, DELIVERY_PENDING_START_TODAY_EVENT),
+      inArray(notifications.order_id, pendingTodayOrderIds),
+      gte(notifications.created_at, start),
+      lt(notifications.created_at, end),
+    ));
+
+  const alreadyNotifiedSet = new Set(alreadyNotifiedRows.map((row) => Number(row.order_id)));
+  const orderIdsToNotify = pendingTodayOrderIds.filter((orderId) => !alreadyNotifiedSet.has(orderId));
+
+  if (!orderIdsToNotify.length) {
+    return;
+  }
+
+  await Promise.all(orderIdsToNotify.map((orderId) => createNotificationsForRole({
+    role: 'Admin',
+    payload: {
+      eventType: DELIVERY_PENDING_START_TODAY_EVENT,
+      title: 'Delivery pending to start today',
+      message: `Order #${orderId} is still pending and scheduled for today. Please start delivery.`,
+      orderId,
+    },
+  })));
+};
+
 router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
   const { page, limit, offset, sort, search } = parseListQuery(req.query);
   const sortDirection = sort === 'asc' ? asc(orders.order_id) : desc(orders.order_id);
@@ -317,6 +396,8 @@ router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
 }));
 
 router.get('/delivery/admin', requireAdmin, asyncHandler(async (req, res) => {
+  await applyDeliveryAutomation(null);
+
   const { page, limit, offset, sort, search } = parseListQuery(req.query);
   const requestedStatus = assertValidDeliveryStatus(req.query.delivery_status);
   const dateRangeFilter = parseDeliveryDateRangeFilter(req.query.date_range);
@@ -420,19 +501,30 @@ router.get('/delivery/admin', requireAdmin, asyncHandler(async (req, res) => {
 
 router.get('/delivery/today', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
   const utcOffsetMinutes = parseClientUtcOffsetMinutes(req);
+  await applyDeliveryAutomation(utcOffsetMinutes);
+
   const { page, limit, offset, sort, search } = parseListQuery(req.query);
   const sortDirection = sort === 'asc' ? asc(orders.order_id) : desc(orders.order_id);
   const { start, end } = resolveTodayRange(utcOffsetMinutes);
   const filters = [
     gte(orders.delivery_date, start),
     lt(orders.delivery_date, end),
-    inArray(orders.delivery_status, [
+  ];
+
+  if (isAdminRequest(req)) {
+    filters.push(inArray(orders.delivery_status, [
       DELIVERY_STATUSES.pending,
       DELIVERY_STATUSES.out_for_delivery,
       DELIVERY_STATUSES.delivered,
       DELIVERY_STATUSES.failed,
-    ]),
-  ];
+    ]));
+  } else {
+    filters.push(inArray(orders.delivery_status, [
+      DELIVERY_STATUSES.out_for_delivery,
+      DELIVERY_STATUSES.delivered,
+      DELIVERY_STATUSES.failed,
+    ]));
+  }
 
   if (search) {
     filters.push(sql`(
@@ -780,8 +872,13 @@ router.patch('/:id/delivery-status', requireRole('Admin', 'User'), validate(idPa
 
   const adminRequest = isAdminRequest(req);
   if (!adminRequest) {
-    if (![DELIVERY_STATUSES.pending, DELIVERY_STATUSES.out_for_delivery, DELIVERY_STATUSES.delivered, DELIVERY_STATUSES.failed].includes(delivery_status)) {
-      throw new AppError(403, 'Delivery users cannot set that status.');
+    const canCompleteActiveDelivery = existingOrder.delivery_status === DELIVERY_STATUSES.out_for_delivery
+      && [DELIVERY_STATUSES.delivered, DELIVERY_STATUSES.failed].includes(delivery_status);
+    const canRevertCompletedDelivery = [DELIVERY_STATUSES.delivered, DELIVERY_STATUSES.failed].includes(existingOrder.delivery_status)
+      && delivery_status === DELIVERY_STATUSES.out_for_delivery;
+
+    if (!canCompleteActiveDelivery && !canRevertCompletedDelivery) {
+      throw new AppError(403, 'Delivery users can only mark out-for-delivery orders as delivered or failed, or revert delivered/failed orders back to out for delivery.');
     }
   }
 
