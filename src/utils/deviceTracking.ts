@@ -1,7 +1,7 @@
 import type { Request } from 'express';
 import { and, desc, eq } from 'drizzle-orm';
 import { db } from '../db/db.js';
-import { userDevices } from '../db/schema.js';
+import { revokedDeviceSessions, userDevices } from '../db/schema.js';
 
 type DeviceSessionRecord = {
   device_id: string;
@@ -93,5 +93,36 @@ export const removeUserDevice = async (userId: number, deviceId: string): Promis
     .returning({ device_id: userDevices.device_id });
 
   return deletedRows.length > 0;
+};
+
+export const revokeDeviceSession = async (userId: number, deviceId: string): Promise<void> => {
+  await db
+    .insert(revokedDeviceSessions)
+    .values({
+      user_id: userId,
+      device_id: deviceId,
+    })
+    .onConflictDoUpdate({
+      target: [revokedDeviceSessions.user_id, revokedDeviceSessions.device_id],
+      set: {
+        revoked_at: new Date(),
+      },
+    });
+};
+
+export const clearDeviceRevocation = async (userId: number, deviceId: string): Promise<void> => {
+  await db
+    .delete(revokedDeviceSessions)
+    .where(and(eq(revokedDeviceSessions.user_id, userId), eq(revokedDeviceSessions.device_id, deviceId)));
+};
+
+export const isDeviceSessionRevoked = async (userId: number, deviceId: string): Promise<boolean> => {
+  const revoked = await db
+    .select({ revoked_session_id: revokedDeviceSessions.revoked_session_id })
+    .from(revokedDeviceSessions)
+    .where(and(eq(revokedDeviceSessions.user_id, userId), eq(revokedDeviceSessions.device_id, deviceId)))
+    .limit(1);
+
+  return revoked.length > 0;
 };
 

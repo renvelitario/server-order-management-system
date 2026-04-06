@@ -1,7 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import { supabaseAdmin } from '../db/db.js';
 import { getLocalUserByAuthUser } from '../utils/authUser.js';
-import { trackUserDevice } from '../utils/deviceTracking.js';
+import { getCurrentDeviceId, isDeviceSessionRevoked, trackUserDevice } from '../utils/deviceTracking.js';
 
 const ACTIVE_STATUS = 'active';
 
@@ -34,6 +34,14 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
 
     req.user = user;
     req.localUser = localUser;
+
+    const currentDeviceId = getCurrentDeviceId(req);
+    if (currentDeviceId && localUser.user_id) {
+      const revoked = await isDeviceSessionRevoked(Number(localUser.user_id), currentDeviceId);
+      if (revoked) {
+        return res.status(401).json({ error: 'Session has been signed out for this device. Please sign in again.' });
+      }
+    }
 
     if (localUser.user_id) {
       trackUserDevice(req, Number(localUser.user_id)).catch((trackingError) => {

@@ -46,6 +46,20 @@ export const userDevices = pgTable('ims_user_devices', {
 	userDevicesUserSeenIdx: uniqueIndex('ims_user_devices_user_device_unique').on(table.user_id, table.device_id),
 }));
 
+export const revokedDeviceSessions = pgTable('ims_revoked_device_sessions', {
+	revoked_session_id: serial('revoked_session_id').primaryKey(),
+	user_id: integer('user_id').notNull(),
+	device_id: varchar('device_id', { length: 80 }).notNull(),
+	revoked_at: timestamp('revoked_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+	revokedDeviceUserFk: foreignKey({
+		columns: [table.user_id],
+		foreignColumns: [users.user_id],
+	}),
+	revokedDeviceUnique: uniqueIndex('ims_revoked_device_sessions_user_device_unique').on(table.user_id, table.device_id),
+	revokedDeviceLookupIdx: index('ims_revoked_device_sessions_lookup_idx').on(table.user_id, table.device_id),
+}));
+
 export const products = pgTable('ims_products', {
 	product_id: serial('product_id').primaryKey(),
 	sku: varchar('sku', { length: 32 }),

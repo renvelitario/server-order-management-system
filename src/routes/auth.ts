@@ -16,7 +16,13 @@ import {
   updateUserByAdminSchema,
 } from '../validators/auth.js';
 import { idParamSchema } from '../validators/common.js';
-import { getCurrentDeviceId, listUserDevices, removeUserDevice } from '../utils/deviceTracking.js';
+import {
+  clearDeviceRevocation,
+  getCurrentDeviceId,
+  listUserDevices,
+  removeUserDevice,
+  revokeDeviceSession,
+} from '../utils/deviceTracking.js';
 
 const router = express.Router();
 const DEFAULT_INACTIVITY_MINUTES = 60;
@@ -79,6 +85,12 @@ router.post('/login', validate(loginSchema), asyncHandler(async (req, res) => {
   }
 
   console.log(`Login successful for: ${userEmail}`);
+
+  const localUser = await getLocalUserByAuthUser(data.user);
+  const currentDeviceId = getCurrentDeviceId(req);
+  if (localUser?.user_id && currentDeviceId) {
+    await clearDeviceRevocation(Number(localUser.user_id), currentDeviceId);
+  }
 
   res.json({
     message: 'Login successful.',
@@ -259,7 +271,9 @@ router.delete('/session-devices/:deviceId', requireAuth, asyncHandler(async (req
     throw new AppError(404, 'Device not found.');
   }
 
-  res.json({ message: 'Device removed from tracked sessions.' });
+  await revokeDeviceSession(localUser.user_id, deviceId);
+
+  res.json({ message: 'Device removed and signed out from this account.' });
 }));
 
 router.post('/change-password', requireAuth, validate(changePasswordSchema), asyncHandler(async (req, res) => {
