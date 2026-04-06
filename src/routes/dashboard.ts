@@ -8,6 +8,8 @@ import { asyncHandler } from '../utils/errors.js';
 const router = express.Router();
 router.use(requireAuth);
 
+const DELIVERY_BACKLOG_STATUSES = new Set(['unassigned', 'pending', 'out_for_delivery']);
+
 const isDevelopment = process.env.NODE_ENV !== 'production';
 
 const debugLog = (message, payload) => {
@@ -72,7 +74,17 @@ router.get('/summary', asyncHandler(async (req, res) => {
       })
       .from(products),
     db.select({ count: sql`count(*)::int` }).from(customers),
-    db.select({ order_id: orders.order_id, order_date: orders.order_date }).from(orders).where(orderFilters.length ? and(...orderFilters) : undefined),
+    db
+      .select({
+        order_id: orders.order_id,
+        customer_id: orders.customer_id,
+        order_date: orders.order_date,
+        delivery_status: orders.delivery_status,
+        discount: orders.discount,
+        delivery_fee: orders.delivery_fee,
+      })
+      .from(orders)
+      .where(orderFilters.length ? and(...orderFilters) : undefined),
   ]);
 
   const filteredOrderIds = new Set(filteredOrders.map((order) => order.order_id));
@@ -83,8 +95,12 @@ router.get('/summary', asyncHandler(async (req, res) => {
       .where(inArray(orderItems.order_id, [...filteredOrderIds]))
     : [];
 
-  const totalSales = relevantItems.reduce((sum, item) => sum + Number(item.quantity) * Number(item.price), 0);
-  const revenueByMonth = new Map();
+  const grossSales = relevantItems.reduce((sum, item) => sum + Number(item.quantity) * Number(item.price), 0);
+  const totalDiscounts = filteredOrders.reduce((sum, order) => sum + Number(order.discount || 0), 0);
+  const totalDeliveryFees = filteredOrders.reduce((sum, order) => sum + Number(order.delivery_fee || 0), 0);
+  const totalSales = Math.max(0, grossSales - totalDiscounts + totalDeliveryFees);
+
+  const monthlyTrendByMonth = new Map();
 
   filteredOrders.forEach((order) => {
     const date = new Date(order.order_date);
@@ -93,7 +109,11 @@ router.get('/summary', asyncHandler(async (req, res) => {
     }
 
     const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-    revenueByMonth.set(key, 0);
+    const current = monthlyTrendByMonth.get(key) || { revenue: 0, orders: 0 };
+    monthlyTrendByMonth.set(key, {
+      revenue: current.revenue,
+      orders: current.orders + 1,
+    });
   });
 
   const orderDateById = new Map(filteredOrders.map((order) => [order.order_id, order.order_date]));
@@ -110,12 +130,18 @@ router.get('/summary', asyncHandler(async (req, res) => {
     }
 
     const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-    revenueByMonth.set(key, (revenueByMonth.get(key) || 0) + Number(item.quantity) * Number(item.price));
+    const current = monthlyTrendByMonth.get(key) || { revenue: 0, orders: 0 };
+    monthlyTrendByMonth.set(key, {
+      revenue: current.revenue + Number(item.quantity) * Number(item.price),
+      orders: current.orders,
+    });
   });
 
   const productSales = new Map();
+  const productRevenue = new Map();
   relevantItems.forEach((item) => {
     productSales.set(item.product_id, (productSales.get(item.product_id) || 0) + Number(item.quantity));
+    productRevenue.set(item.product_id, (productRevenue.get(item.product_id) || 0) + Number(item.quantity) * Number(item.price));
   });
 
   const topProductEntries = [...productSales.entries()]
@@ -136,20 +162,46 @@ router.get('/summary', asyncHandler(async (req, res) => {
     sku: productById.get(productId)?.sku || String(productId),
     product_name: productById.get(productId)?.product_name || `Product #${productId}`,
     sold_quantity: soldQuantity,
+    revenue: Number(productRevenue.get(productId) || 0),
   }));
 
-  const monthlyRevenue = [...revenueByMonth.entries()]
+  const monthlyTrends = [...monthlyTrendByMonth.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([month, revenue]) => ({ month, revenue }));
+    .map(([month, stats]) => ({
+      month,
+      revenue: Number(stats.revenue || 0),
+      orders: Number(stats.orders || 0),
+    }));
+
+  const monthlyRevenue = monthlyTrends.map(({ month, revenue }) => ({ month, revenue }));
+
+  const activeCustomerCount = new Set(filteredOrders.map((order) => order.customer_id)).size;
+  const pendingDeliveries = filteredOrders.filter((order) => DELIVERY_BACKLOG_STATUSES.has(String(order.delivery_status || ''))).length;
+  const deliveredOrders = filteredOrders.filter((order) => String(order.delivery_status || '') === 'delivered').length;
+  const failedDeliveries = filteredOrders.filter((order) => String(order.delivery_status || '') === 'failed').length;
+  const cancelledOrders = filteredOrders.filter((order) => String(order.delivery_status || '') === 'cancelled').length;
+  const totalUnitsSold = relevantItems.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+  const averageOrderValue = filteredOrders.length ? totalSales / filteredOrders.length : 0;
 
   res.json({
     summary: {
       totalSales,
+      grossSales,
+      totalDiscounts,
+      totalDeliveryFees,
       totalOrders: filteredOrders.length,
       totalProducts: Number(productCountRow[0]?.count || 0),
       totalCustomers: Number(customerCountRow[0]?.count || 0),
+      activeCustomers: activeCustomerCount,
+      pendingDeliveries,
+      deliveredOrders,
+      failedDeliveries,
+      cancelledOrders,
+      totalUnitsSold,
+      averageOrderValue,
     },
     monthlyRevenue,
+    monthlyTrends,
     topProducts,
   });
 }));

@@ -32,6 +32,8 @@ type OrderPayload = {
   order_date?: string;
   delivery_date?: string;
   items_data: Array<{ product_id: number; quantity: number; price: number }>;
+  discount?: number;
+  delivery_fee?: number;
 };
 
 const parseOrderDate = (value) => {
@@ -548,7 +550,7 @@ router.get('/:id', requireRole('Admin', 'User'), validate(idParamSchema, 'params
 }));
 
 router.post('/', requireAdmin, validate(orderPayloadSchema), asyncHandler(async (req, res) => {
-  const { customer_id, order_date, items_data, delivery_date } = req.body as OrderPayload;
+  const { customer_id, order_date, items_data, delivery_date, discount = 0, delivery_fee = 0 } = req.body as OrderPayload;
   const uniqueProductIds: number[] = [...new Set(items_data.map((item) => item.product_id))];
 
   const result = await db.transaction(async (tx) => {
@@ -594,6 +596,8 @@ router.post('/', requireAdmin, validate(orderPayloadSchema), asyncHandler(async 
       delivery_date: parsedDeliveryDate,
       delivery_status: initialDeliveryStatus,
       delivery_user_id: null,
+      discount,
+      delivery_fee,
     }).returning();
 
     const createdItems = [];

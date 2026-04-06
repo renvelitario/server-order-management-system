@@ -44,6 +44,8 @@ export const orderPayloadSchema = z.object({
     quantity: z.coerce.number().int().positive(),
     price: z.coerce.number().min(0),
   })).min(1),
+  discount: z.coerce.number().min(0).default(0).optional(),
+  delivery_fee: z.coerce.number().min(0).default(0).optional(),
 });
 
 export const deliveryStatusSchema = z.enum(['unassigned', 'pending', 'out_for_delivery', 'delivered', 'failed', 'cancelled']);

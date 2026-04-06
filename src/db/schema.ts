@@ -40,6 +40,7 @@ export const customers = pgTable('ims_customers', {
 	contact_no: varchar('contact_no', { length: 20 }).notNull()
 });
 
+
 export const orders = pgTable('ims_orders', {
 	order_id: serial('order_id').primaryKey(),
 	customer_id: integer('customer_id').notNull(),
@@ -48,7 +49,9 @@ export const orders = pgTable('ims_orders', {
 	delivery_status: varchar('delivery_status', { length: 50 }).notNull().default('unassigned'),
 	delivery_user_id: integer('delivery_user_id'),
 	delivered_at: timestamp('delivered_at'),
-	delivered_by: integer('delivered_by')
+	delivered_by: integer('delivered_by'),
+	discount: doublePrecision('discount').notNull().default(0),
+	delivery_fee: doublePrecision('delivery_fee').notNull().default(0)
 }, (table) => ({
 	customerIdFk: foreignKey({
 		columns: [table.customer_id],
