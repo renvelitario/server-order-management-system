@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, timestamp, doublePrecision, varchar, foreignKey, check, uniqueIndex, boolean } from 'drizzle-orm/pg-core';
+import { pgTable, serial, text, integer, timestamp, doublePrecision, varchar, foreignKey, check, uniqueIndex, boolean, index } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
 const timestamps = {
@@ -133,5 +133,5 @@ export const notifications = pgTable('ims_notifications', {
 		columns: [table.order_id],
 		foreignColumns: [orders.order_id],
 	}),
-	notificationsRecipientCreatedIdx: uniqueIndex('ims_notifications_recipient_created_unique').on(table.recipient_user_id, table.notification_id),
+	notificationsRecipientCreatedIdx: index('ims_notifications_recipient_created_idx').on(table.recipient_user_id, table.notification_id),
 }));
