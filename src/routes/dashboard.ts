@@ -176,6 +176,9 @@ router.get('/summary', asyncHandler(async (req, res) => {
   const monthlyRevenue = monthlyTrends.map(({ month, revenue }) => ({ month, revenue }));
 
   const activeCustomerCount = new Set(filteredOrders.map((order) => order.customer_id)).size;
+  const unassignedDeliveries = filteredOrders.filter((order) => String(order.delivery_status || '') === 'unassigned').length;
+  const scheduledDeliveries = filteredOrders.filter((order) => String(order.delivery_status || '') === 'pending').length;
+  const outForDelivery = filteredOrders.filter((order) => String(order.delivery_status || '') === 'out_for_delivery').length;
   const pendingDeliveries = filteredOrders.filter((order) => DELIVERY_BACKLOG_STATUSES.has(String(order.delivery_status || ''))).length;
   const deliveredOrders = filteredOrders.filter((order) => String(order.delivery_status || '') === 'delivered').length;
   const failedDeliveries = filteredOrders.filter((order) => String(order.delivery_status || '') === 'failed').length;
@@ -193,6 +196,9 @@ router.get('/summary', asyncHandler(async (req, res) => {
       totalProducts: Number(productCountRow[0]?.count || 0),
       totalCustomers: Number(customerCountRow[0]?.count || 0),
       activeCustomers: activeCustomerCount,
+      unassignedDeliveries,
+      scheduledDeliveries,
+      outForDelivery,
       pendingDeliveries,
       deliveredOrders,
       failedDeliveries,
