@@ -16,11 +16,13 @@ import {
   updateUserByAdminSchema,
 } from '../validators/auth.js';
 import { idParamSchema } from '../validators/common.js';
+import { getCurrentDeviceId, listUserDevices, removeUserDevice } from '../utils/deviceTracking.js';
 
 const router = express.Router();
 const DEFAULT_INACTIVITY_MINUTES = 60;
 const MIN_INACTIVITY_MINUTES = 10;
 const MAX_INACTIVITY_MINUTES = 480;
+const DEVICE_ACTIVE_FALLBACK_MINUTES = 24 * 60;
 
 const normalizeInactivityTimeout = (value) => {
   const parsedValue = Number(value);
@@ -188,16 +190,76 @@ router.put('/session-timeout', requireAuth, validate(updateSessionTimeoutSchema)
     throw new AppError(404, 'User not found.');
   }
 
-  const normalizedTimeout = normalizeInactivityTimeout(req.body.inactivity_timeout_minutes);
+  const normalizedTimeout = req.body.session_timeout_enabled
+    ? normalizeInactivityTimeout(req.body.inactivity_timeout_minutes)
+    : normalizeInactivityTimeout(localUser.inactivity_timeout_minutes);
 
   const [updatedUser] = await db.update(users)
     .set({
       inactivity_timeout_minutes: normalizedTimeout,
+      session_timeout_enabled: Boolean(req.body.session_timeout_enabled),
     })
     .where(eq(users.user_id, localUser.user_id))
     .returning(publicUserColumns);
 
   res.json(updatedUser);
+}));
+
+router.get('/session-devices', requireAuth, asyncHandler(async (req, res) => {
+  const localUser = await getLocalUserByAuthUser(req.user);
+  if (!localUser) {
+    throw new AppError(404, 'User not found.');
+  }
+
+  const currentDeviceId = getCurrentDeviceId(req);
+  const records = await listUserDevices(localUser.user_id);
+  const now = Date.now();
+
+  const activeWindowMinutes = localUser.session_timeout_enabled
+    ? Math.max(MIN_INACTIVITY_MINUTES, localUser.inactivity_timeout_minutes)
+    : DEVICE_ACTIVE_FALLBACK_MINUTES;
+  const activeWindowMs = activeWindowMinutes * 60 * 1000;
+
+  const devices = records.map((record) => {
+    const lastSeenMs = new Date(record.last_seen_at).getTime();
+    const isActive = Number.isFinite(lastSeenMs) && (now - lastSeenMs) <= activeWindowMs;
+
+    return {
+      ...record,
+      is_current: currentDeviceId ? record.device_id === currentDeviceId : false,
+      is_active: isActive,
+    };
+  });
+
+  res.json({
+    devices,
+    total_devices: devices.length,
+    active_devices: devices.filter((device) => device.is_active).length,
+  });
+}));
+
+router.delete('/session-devices/:deviceId', requireAuth, asyncHandler(async (req, res) => {
+  const localUser = await getLocalUserByAuthUser(req.user);
+  if (!localUser) {
+    throw new AppError(404, 'User not found.');
+  }
+
+  const deviceId = String(req.params.deviceId || '').trim();
+  if (!deviceId) {
+    throw new AppError(400, 'Device id is required.');
+  }
+
+  const currentDeviceId = getCurrentDeviceId(req);
+  if (currentDeviceId && deviceId === currentDeviceId) {
+    throw new AppError(400, 'Current device cannot be removed from this action.');
+  }
+
+  const removed = await removeUserDevice(localUser.user_id, deviceId);
+  if (!removed) {
+    throw new AppError(404, 'Device not found.');
+  }
+
+  res.json({ message: 'Device removed from tracked sessions.' });
 }));
 
 router.post('/change-password', requireAuth, validate(changePasswordSchema), asyncHandler(async (req, res) => {

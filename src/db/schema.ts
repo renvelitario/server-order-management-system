@@ -1,5 +1,10 @@
-import { pgTable, serial, text, integer, timestamp, doublePrecision, varchar, foreignKey, check, uniqueIndex } from 'drizzle-orm/pg-core';
+import { pgTable, serial, text, integer, timestamp, doublePrecision, varchar, foreignKey, check, uniqueIndex, boolean } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
+
+const timestamps = {
+	createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+	updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().$onUpdate(() => new Date()).notNull(),
+};
 
 export const users = pgTable('ims_users', {
 	user_id: serial('user_id').primaryKey(),
@@ -11,7 +16,9 @@ export const users = pgTable('ims_users', {
 	acc_type: varchar('acc_type', { length: 50 }).notNull().default('User'), // 'Admin' or 'User'
 	status: varchar('status', { length: 50 }).notNull().default('Active'), // 'Active' | 'Disabled' | 'Suspended'
 	inactivity_timeout_minutes: integer('inactivity_timeout_minutes').notNull().default(60),
-	supabase_id: varchar('supabase_id', { length: 255 }).notNull() // To link with auth.users
+	session_timeout_enabled: boolean('session_timeout_enabled').notNull().default(true),
+	supabase_id: varchar('supabase_id', { length: 255 }).notNull(), // To link with auth.users
+	...timestamps,
 }, (table) => ({
 	usersEmailUnique: uniqueIndex('ims_users_email_unique').on(table.email),
 	usersUsernameUnique: uniqueIndex('ims_users_username_unique').on(table.username),
@@ -21,12 +28,31 @@ export const users = pgTable('ims_users', {
 	usersInactivityCheck: check('ims_users_inactivity_timeout_check', sql`${table.inactivity_timeout_minutes} BETWEEN 10 AND 480`)
 }));
 
+export const userDevices = pgTable('ims_user_devices', {
+	device_id: varchar('device_id', { length: 80 }).primaryKey(),
+	user_id: integer('user_id').notNull(),
+	device_label: varchar('device_label', { length: 200 }),
+	user_agent: text('user_agent').notNull().default('Unknown device'),
+	timezone: varchar('timezone', { length: 80 }),
+	last_ip: varchar('last_ip', { length: 80 }),
+	first_seen_at: timestamp('first_seen_at').notNull().defaultNow(),
+	last_seen_at: timestamp('last_seen_at').notNull().defaultNow(),
+	...timestamps,
+}, (table) => ({
+	userDevicesUserFk: foreignKey({
+		columns: [table.user_id],
+		foreignColumns: [users.user_id],
+	}),
+	userDevicesUserSeenIdx: uniqueIndex('ims_user_devices_user_device_unique').on(table.user_id, table.device_id),
+}));
+
 export const products = pgTable('ims_products', {
 	product_id: serial('product_id').primaryKey(),
 	sku: varchar('sku', { length: 32 }),
 	product_name: varchar('product_name', { length: 300 }).notNull(),
 	price: doublePrecision('price').notNull(),
-	status: varchar('status', { length: 50 }).notNull().default('active') // 'active' or 'inactive'
+	status: varchar('status', { length: 50 }).notNull().default('active'), // 'active' or 'inactive'
+	...timestamps,
 }, (table) => ({
 	productsSkuUnique: uniqueIndex('ims_products_sku_unique').on(table.sku),
 	productsPriceCheck: check('ims_products_price_check', sql`${table.price} >= 0`),
@@ -37,7 +63,8 @@ export const customers = pgTable('ims_customers', {
 	customer_id: serial('customer_id').primaryKey(),
 	name: varchar('name', { length: 200 }).notNull(),
 	address: text('address').notNull(),
-	contact_no: varchar('contact_no', { length: 20 }).notNull()
+	contact_no: varchar('contact_no', { length: 20 }).notNull(),
+	...timestamps,
 });
 
 
@@ -51,7 +78,8 @@ export const orders = pgTable('ims_orders', {
 	delivered_at: timestamp('delivered_at'),
 	delivered_by: integer('delivered_by'),
 	discount: doublePrecision('discount').notNull().default(0),
-	delivery_fee: doublePrecision('delivery_fee').notNull().default(0)
+	delivery_fee: doublePrecision('delivery_fee').notNull().default(0),
+	...timestamps,
 }, (table) => ({
 	customerIdFk: foreignKey({
 		columns: [table.customer_id],
@@ -73,7 +101,8 @@ export const orderItems = pgTable('ims_order_items', {
 	order_id: integer('order_id').notNull(),
 	product_id: integer('product_id').notNull(),
 	quantity: integer('quantity').notNull(),
-	price: doublePrecision('price').notNull()
+	price: doublePrecision('price').notNull(),
+	...timestamps,
 }, (table) => ({
 	orderIdFk: foreignKey({
 		columns: [table.order_id],

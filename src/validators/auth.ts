@@ -29,7 +29,17 @@ export const updateProfileSchema = z.object({
 }).strict();
 
 export const updateSessionTimeoutSchema = z.object({
-  inactivity_timeout_minutes: z.coerce.number().int().min(10).max(480),
+  inactivity_timeout_minutes: z.coerce.number().int().min(10).max(480).optional(),
+  session_timeout_enabled: z.boolean(),
+}).refine((data) => {
+  if (!data.session_timeout_enabled) {
+    return true;
+  }
+
+  return data.inactivity_timeout_minutes != null;
+}, {
+  message: 'inactivity_timeout_minutes is required when session timeout is enabled.',
+  path: ['inactivity_timeout_minutes'],
 });
 
 export const changePasswordSchema = z.object({

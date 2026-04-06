@@ -11,6 +11,7 @@ export const publicUserColumns = {
   acc_type: users.acc_type,
   status: users.status,
   inactivity_timeout_minutes: users.inactivity_timeout_minutes,
+  session_timeout_enabled: users.session_timeout_enabled,
   supabase_id: users.supabase_id,
 };
 

@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import { supabaseAdmin } from '../db/db.js';
 import { getLocalUserByAuthUser } from '../utils/authUser.js';
+import { trackUserDevice } from '../utils/deviceTracking.js';
 
 const ACTIVE_STATUS = 'active';
 
@@ -33,6 +34,13 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
 
     req.user = user;
     req.localUser = localUser;
+
+    if (localUser.user_id) {
+      trackUserDevice(req, Number(localUser.user_id)).catch((trackingError) => {
+        console.warn('[AUTH_DEVICE_TRACKING] Unable to update device activity.', trackingError);
+      });
+    }
+
     next();
   } catch (err) {
     console.error('[AUTH_ERROR]', err);
