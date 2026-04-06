@@ -211,6 +211,15 @@ const isTodayDeliveryDate = (value, utcOffsetMinutes = null) => {
   return date >= start && date < end;
 };
 
+const canDeliveryUserAccessOrderToday = (order, utcOffsetMinutes = null) => {
+  if (!order) {
+    return false;
+  }
+
+  return order.delivery_status === DELIVERY_STATUSES.out_for_delivery
+    && isTodayDeliveryDate(order.delivery_date, utcOffsetMinutes);
+};
+
 const formatDeliveryStatusLabel = (value: string): string => String(value || '')
   .replace(/_/g, ' ')
   .replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -519,11 +528,7 @@ router.get('/delivery/today', requireRole('Admin', 'User'), asyncHandler(async (
       DELIVERY_STATUSES.failed,
     ]));
   } else {
-    filters.push(inArray(orders.delivery_status, [
-      DELIVERY_STATUSES.out_for_delivery,
-      DELIVERY_STATUSES.delivered,
-      DELIVERY_STATUSES.failed,
-    ]));
+    filters.push(eq(orders.delivery_status, DELIVERY_STATUSES.out_for_delivery));
   }
 
   if (search) {
@@ -603,6 +608,7 @@ router.get('/delivery/today', requireRole('Admin', 'User'), asyncHandler(async (
 
 router.get('/:id', requireRole('Admin', 'User'), validate(idParamSchema, 'params'), asyncHandler(async (req, res) => {
   const orderId = Number(req.params.id);
+  const utcOffsetMinutes = parseClientUtcOffsetMinutes(req);
   const order = await db
     .select({
       order_id: orders.order_id,
@@ -624,6 +630,10 @@ router.get('/:id', requireRole('Admin', 'User'), validate(idParamSchema, 'params
 
   if (!order.length) {
     throw new AppError(404, 'Order not found.');
+  }
+
+  if (!isAdminRequest(req) && !canDeliveryUserAccessOrderToday(order[0], utcOffsetMinutes)) {
+    throw new AppError(403, 'Delivery users can only access orders that are out for delivery today.');
   }
 
   const items = await db
@@ -854,6 +864,7 @@ router.put('/:id', requireAdmin, validate(idParamSchema, 'params'), validate(ord
 
 router.patch('/:id/delivery-status', requireRole('Admin', 'User'), validate(idParamSchema, 'params'), validate(updateDeliveryStatusSchema), asyncHandler(async (req, res) => {
   const orderId = Number(req.params.id);
+  const utcOffsetMinutes = parseClientUtcOffsetMinutes(req);
   const { delivery_status } = req.body;
   const existingOrderRows = await db
     .select({
@@ -872,13 +883,14 @@ router.patch('/:id/delivery-status', requireRole('Admin', 'User'), validate(idPa
 
   const adminRequest = isAdminRequest(req);
   if (!adminRequest) {
-    const canCompleteActiveDelivery = existingOrder.delivery_status === DELIVERY_STATUSES.out_for_delivery
-      && [DELIVERY_STATUSES.delivered, DELIVERY_STATUSES.failed].includes(delivery_status);
-    const canRevertCompletedDelivery = [DELIVERY_STATUSES.delivered, DELIVERY_STATUSES.failed].includes(existingOrder.delivery_status)
-      && delivery_status === DELIVERY_STATUSES.out_for_delivery;
+    if (!canDeliveryUserAccessOrderToday(existingOrder, utcOffsetMinutes)) {
+      throw new AppError(403, 'Delivery users can only update orders that are out for delivery today.');
+    }
 
-    if (!canCompleteActiveDelivery && !canRevertCompletedDelivery) {
-      throw new AppError(403, 'Delivery users can only mark out-for-delivery orders as delivered or failed, or revert delivered/failed orders back to out for delivery.');
+    const canCompleteActiveDelivery = [DELIVERY_STATUSES.delivered, DELIVERY_STATUSES.failed].includes(delivery_status);
+
+    if (!canCompleteActiveDelivery) {
+      throw new AppError(403, 'Delivery users can only mark today\'s out-for-delivery orders as delivered or failed.');
     }
   }
 
