@@ -113,3 +113,25 @@ export const orderItems = pgTable('ims_order_items', {
 		foreignColumns: [products.product_id]
 	})
 }));
+
+export const notifications = pgTable('ims_notifications', {
+	notification_id: serial('notification_id').primaryKey(),
+	recipient_user_id: integer('recipient_user_id').notNull(),
+	event_type: varchar('event_type', { length: 80 }).notNull(),
+	title: varchar('title', { length: 200 }).notNull(),
+	message: text('message').notNull(),
+	order_id: integer('order_id'),
+	is_read: boolean('is_read').notNull().default(false),
+	read_at: timestamp('read_at', { withTimezone: true }),
+	created_at: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+	notificationsRecipientFk: foreignKey({
+		columns: [table.recipient_user_id],
+		foreignColumns: [users.user_id],
+	}),
+	notificationsOrderFk: foreignKey({
+		columns: [table.order_id],
+		foreignColumns: [orders.order_id],
+	}),
+	notificationsRecipientCreatedIdx: uniqueIndex('ims_notifications_recipient_created_unique').on(table.recipient_user_id, table.notification_id),
+}));

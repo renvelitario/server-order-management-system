@@ -9,6 +9,7 @@ import { validate } from '../middleware/validate.js';
 import { idParamSchema } from '../validators/common.js';
 import { deliveryAssignmentSchema, orderPayloadSchema, updateDeliveryStatusSchema } from '../validators/entity.js';
 import { buildPaginatedResponse, logPaginationDebug, parseListQuery } from '../utils/pagination.js';
+import { createNotificationsForRole } from '../utils/notifications.js';
 
 const router = express.Router();
 router.use(requireAuth);
@@ -209,6 +210,10 @@ const isTodayDeliveryDate = (value, utcOffsetMinutes = null) => {
   const { start, end } = resolveTodayRange(utcOffsetMinutes);
   return date >= start && date < end;
 };
+
+const formatDeliveryStatusLabel = (value: string): string => String(value || '')
+  .replace(/_/g, ' ')
+  .replace(/\b\w/g, (letter) => letter.toUpperCase());
 
 router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
   const { page, limit, offset, sort, search } = parseListQuery(req.query);
@@ -812,6 +817,58 @@ router.patch('/:id/delivery-status', requireRole('Admin', 'User'), validate(idPa
 
   if (!updatedOrder) {
     throw new AppError(404, 'Order not found.');
+  }
+
+  const previousStatus = existingOrder.delivery_status;
+  const hasStatusChanged = previousStatus !== delivery_status;
+  if (hasStatusChanged) {
+    const actorName = String(req.localUser?.name || req.localUser?.username || 'A user').trim();
+    const previousStatusLabel = formatDeliveryStatusLabel(previousStatus);
+    const nextStatusLabel = formatDeliveryStatusLabel(delivery_status);
+
+    if (adminRequest) {
+      await createNotificationsForRole({
+        role: 'User',
+        payload: {
+          eventType: 'order_status_changed_by_admin',
+          title: 'Order status updated by admin',
+          message: `Admin ${actorName} changed order #${orderId} from ${previousStatusLabel} to ${nextStatusLabel}.`,
+          orderId,
+        },
+      });
+    } else {
+      if (delivery_status === DELIVERY_STATUSES.delivered) {
+        await createNotificationsForRole({
+          role: 'Admin',
+          payload: {
+            eventType: 'order_delivered_by_rider',
+            title: 'Delivery completed',
+            message: `${actorName} marked order #${orderId} as delivered.`,
+            orderId,
+          },
+        });
+      } else if (delivery_status === DELIVERY_STATUSES.failed) {
+        await createNotificationsForRole({
+          role: 'Admin',
+          payload: {
+            eventType: 'delivery_failed_by_rider',
+            title: 'Delivery failed',
+            message: `${actorName} marked order #${orderId} as failed.`,
+            orderId,
+          },
+        });
+      } else {
+        await createNotificationsForRole({
+          role: 'Admin',
+          payload: {
+            eventType: 'order_status_edited_by_rider',
+            title: 'Order status edited by rider',
+            message: `${actorName} changed order #${orderId} from ${previousStatusLabel} to ${nextStatusLabel}.`,
+            orderId,
+          },
+        });
+      }
+    }
   }
 
   res.json(updatedOrder);

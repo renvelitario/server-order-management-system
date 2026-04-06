@@ -9,6 +9,7 @@ import customersRoutes from './routes/customers.js';
 import ordersRoutes from './routes/orders.js';
 import usersRoutes from './routes/users.js';
 import dashboardRoutes from './routes/dashboard.js';
+import notificationsRoutes from './routes/notifications.js';
 import { errorHandler } from './utils/errors.js';
 
 const app = express();
@@ -56,6 +57,7 @@ app.use('/api/customers', customersRoutes);
 app.use('/api/orders', ordersRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/notifications', notificationsRoutes);
 
 app.get('/', (req, res) => {
   res.send('Inventory Management System API is running.');
