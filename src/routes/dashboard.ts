@@ -3,9 +3,7 @@ import { and, desc, gte, inArray, lte, sql } from 'drizzle-orm';
 import { db } from '../db/db.js';
 import { customers, orderItems, orders, products } from '../db/schema.js';
 import { requireAuth } from '../middleware/auth.js';
-import { validate } from '../middleware/validate.js';
 import { asyncHandler } from '../utils/errors.js';
-import { dashboardQuerySchema } from '../validators/entity.js';
 
 const router = express.Router();
 router.use(requireAuth);
@@ -51,24 +49,7 @@ const resolveRange = (query) => {
   };
 };
 
-type DashboardOrderRow = {
-  order_id: number;
-  customer_id: number;
-  order_date: Date;
-  delivery_status: string;
-  discount: number;
-  delivery_fee: number;
-};
-
-type DashboardRecentOrderRow = {
-  order_id: number;
-  customer_id: number;
-  order_date: Date;
-  delivery_date: Date | null;
-  delivery_status: string;
-};
-
-router.get('/summary', validate(dashboardQuerySchema, 'query'), asyncHandler(async (req, res) => {
+router.get('/summary', asyncHandler(async (req, res) => {
   const range = resolveRange(req.query);
   const orderFilters = [];
 
@@ -86,45 +67,24 @@ router.get('/summary', validate(dashboardQuerySchema, 'query'), asyncHandler(asy
     orderFilters.push(lte(orders.order_date, range.to));
   }
 
-  const selectFilteredOrders = async (useFilters: boolean) => db
-    .select({
-      order_id: orders.order_id,
-      customer_id: orders.customer_id,
-      order_date: orders.order_date,
-      delivery_status: orders.delivery_status,
-      discount: orders.discount,
-      delivery_fee: orders.delivery_fee,
-    })
-    .from(orders)
-    .where(useFilters && orderFilters.length ? and(...orderFilters) : undefined);
-
-  let filteredOrders: DashboardOrderRow[];
-  try {
-    filteredOrders = await selectFilteredOrders(true);
-  } catch (error) {
-    if (!orderFilters.length) {
-      throw error;
-    }
-
-    console.warn('[DASHBOARD] summary filter query failed; falling back to all-time.', {
-      error: String(error),
-      query: req.query,
-    });
-    debugLog('[DEBUG_DASHBOARD]', {
-      route: 'dashboard.summary',
-      fallback: 'all-time-on-filter-error',
-      error: String(error),
-    });
-    filteredOrders = await selectFilteredOrders(false);
-  }
-
-  const [productCountRow, customerCountRow] = await Promise.all([
+  const [productCountRow, customerCountRow, filteredOrders] = await Promise.all([
     db
       .select({
         count: sql`count(*)::int`,
       })
       .from(products),
     db.select({ count: sql`count(*)::int` }).from(customers),
+    db
+      .select({
+        order_id: orders.order_id,
+        customer_id: orders.customer_id,
+        order_date: orders.order_date,
+        delivery_status: orders.delivery_status,
+        discount: orders.discount,
+        delivery_fee: orders.delivery_fee,
+      })
+      .from(orders)
+      .where(orderFilters.length ? and(...orderFilters) : undefined),
   ]);
 
   const filteredOrderIds = new Set(filteredOrders.map((order) => order.order_id));
@@ -260,7 +220,7 @@ router.get('/summary', validate(dashboardQuerySchema, 'query'), asyncHandler(asy
   });
 }));
 
-router.get('/recent-orders', validate(dashboardQuerySchema, 'query'), asyncHandler(async (req, res) => {
+router.get('/recent-orders', asyncHandler(async (req, res) => {
   const range = resolveRange(req.query);
   const orderFilters = [];
 
@@ -278,7 +238,7 @@ router.get('/recent-orders', validate(dashboardQuerySchema, 'query'), asyncHandl
     orderFilters.push(lte(orders.order_date, range.to));
   }
 
-  const selectRecentOrders = async (useFilters: boolean) => db
+  let latestOrders = await db
     .select({
       order_id: orders.order_id,
       customer_id: orders.customer_id,
@@ -287,29 +247,9 @@ router.get('/recent-orders', validate(dashboardQuerySchema, 'query'), asyncHandl
       delivery_status: orders.delivery_status,
     })
     .from(orders)
-    .where(useFilters && orderFilters.length ? and(...orderFilters) : undefined)
+    .where(orderFilters.length ? and(...orderFilters) : undefined)
     .orderBy(desc(orders.order_date))
     .limit(10);
-
-  let latestOrders: DashboardRecentOrderRow[];
-  try {
-    latestOrders = await selectRecentOrders(true);
-  } catch (error) {
-    if (!orderFilters.length) {
-      throw error;
-    }
-
-    console.warn('[DASHBOARD] recent-orders filter query failed; falling back to all-time.', {
-      error: String(error),
-      query: req.query,
-    });
-    debugLog('[DEBUG_DASHBOARD]', {
-      route: 'dashboard.recent-orders',
-      fallback: 'all-time-on-filter-error',
-      error: String(error),
-    });
-    latestOrders = await selectRecentOrders(false);
-  }
 
   // Fallback to full dataset if a provided date range produces no rows.
   if (!latestOrders.length && orderFilters.length) {

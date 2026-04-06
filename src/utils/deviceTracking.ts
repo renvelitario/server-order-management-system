@@ -17,7 +17,6 @@ const DEVICE_HEADER = 'x-client-device-id';
 const DEVICE_LABEL_HEADER = 'x-client-device-label';
 const TIMEZONE_HEADER = 'x-client-timezone';
 const UNKNOWN_DEVICE = 'Unknown device';
-const DEVICE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{7,79}$/;
 
 const parseClientIp = (request: Request): string | null => {
   const forwarded = request.headers['x-forwarded-for'];
@@ -29,22 +28,13 @@ const parseClientIp = (request: Request): string | null => {
 };
 
 export const getCurrentDeviceId = (request: Request): string | null => {
-  return normalizeTrackedDeviceId(request.headers[DEVICE_HEADER]);
-};
-
-export const hasCurrentDeviceIdHeader = (request: Request): boolean => typeof request.headers[DEVICE_HEADER] === 'string';
-
-export const normalizeTrackedDeviceId = (value: unknown): string | null => {
-  if (typeof value !== 'string') {
+  const headerValue = request.headers[DEVICE_HEADER];
+  if (typeof headerValue !== 'string') {
     return null;
   }
 
-  const normalized = value.trim();
-  if (!normalized || !DEVICE_ID_PATTERN.test(normalized)) {
-    return null;
-  }
-
-  return normalized;
+  const normalized = headerValue.trim();
+  return normalized ? normalized.slice(0, 80) : null;
 };
 
 export const trackUserDevice = async (request: Request, userId: number): Promise<void> => {

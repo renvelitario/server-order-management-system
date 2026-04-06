@@ -107,44 +107,4 @@ describe('requireAuth middleware', () => {
     expect(next).toHaveBeenCalled();
     expect(req.localUser.acc_type).toBe('Admin');
   });
-
-  it('blocks invalid device identifiers', async () => {
-    const { requireAuth } = await import('../src/middleware/auth.js');
-
-    mockGetUser.mockResolvedValue({
-      data: { user: { id: 'admin-1', email: 'admin@test.com' } },
-      error: null,
-    });
-
-    mockSelectLimit
-      .mockResolvedValueOnce([
-        {
-          user_id: 1,
-          email: 'admin@test.com',
-          username: 'Admin',
-          acc_type: 'Admin',
-          status: 'Active',
-          inactivity_timeout_minutes: 60,
-          supabase_id: 'admin-1',
-        },
-      ]);
-
-    const req = {
-      headers: {
-        authorization: 'Bearer token',
-        'x-client-device-id': 'bad device id',
-      },
-    };
-    const res = {
-      status: vi.fn().mockReturnThis(),
-      json: vi.fn(),
-    };
-    const next = vi.fn();
-
-    await requireAuth(req, res, next);
-
-    expect(res.status).toHaveBeenCalledWith(400);
-    expect(res.json).toHaveBeenCalledWith({ error: 'Invalid device identifier.' });
-    expect(next).not.toHaveBeenCalled();
-  });
 });

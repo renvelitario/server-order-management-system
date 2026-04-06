@@ -1,5 +1,4 @@
 import express from 'express';
-import rateLimit from 'express-rate-limit';
 import { supabaseAdmin, db } from '../db/db.js';
 import { users } from '../db/schema.js';
 import { eq, sql } from 'drizzle-orm';
@@ -21,7 +20,6 @@ import {
   clearDeviceRevocation,
   getCurrentDeviceId,
   listUserDevices,
-  normalizeTrackedDeviceId,
   removeUserDevice,
   revokeDeviceSession,
 } from '../utils/deviceTracking.js';
@@ -31,17 +29,6 @@ const DEFAULT_INACTIVITY_MINUTES = 60;
 const MIN_INACTIVITY_MINUTES = 10;
 const MAX_INACTIVITY_MINUTES = 480;
 const DEVICE_ACTIVE_FALLBACK_MINUTES = 24 * 60;
-
-const loginRateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: {
-    error: 'Too many login attempts. Please try again later.',
-  },
-  skipSuccessfulRequests: true,
-});
 
 const normalizeInactivityTimeout = (value) => {
   const parsedValue = Number(value);
@@ -54,7 +41,7 @@ const normalizeInactivityTimeout = (value) => {
 };
 
 // Custom login endpoint that supports email, username, or phone
-router.post('/login', loginRateLimiter, validate(loginSchema), asyncHandler(async (req, res) => {
+router.post('/login', validate(loginSchema), asyncHandler(async (req, res) => {
   const { identifier, password } = req.body;
 
   // Determine if identifier is email, username, or phone
@@ -77,11 +64,14 @@ router.post('/login', loginRateLimiter, validate(loginSchema), asyncHandler(asyn
     const [user] = await query.where(whereClause).limit(1);
 
     if (!user) {
+      console.warn(`Login failed: No user found for identifier: ${identifier} (isPhone: ${isPhone})`);
       throw new AppError(401, 'Invalid credentials.');
     }
 
     userEmail = user.email;
   }
+
+  console.log(`Login attempt for email: ${userEmail}`);
 
   // Authenticate with Supabase using the email
   const { data, error } = await supabaseAdmin.auth.signInWithPassword({
@@ -90,8 +80,11 @@ router.post('/login', loginRateLimiter, validate(loginSchema), asyncHandler(asyn
   });
 
   if (error || !data?.session) {
+    console.error('Supabase auth error:', error?.message || 'No session returned');
     throw new AppError(401, 'Invalid credentials.');
   }
+
+  console.log(`Login successful for: ${userEmail}`);
 
   const localUser = await getLocalUserByAuthUser(data.user);
   const currentDeviceId = getCurrentDeviceId(req);
@@ -263,9 +256,9 @@ router.delete('/session-devices/:deviceId', requireAuth, asyncHandler(async (req
     throw new AppError(404, 'User not found.');
   }
 
-  const deviceId = normalizeTrackedDeviceId(req.params.deviceId);
+  const deviceId = String(req.params.deviceId || '').trim();
   if (!deviceId) {
-    throw new AppError(400, 'Valid device id is required.');
+    throw new AppError(400, 'Device id is required.');
   }
 
   const currentDeviceId = getCurrentDeviceId(req);
