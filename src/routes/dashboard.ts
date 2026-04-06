@@ -88,6 +88,11 @@ router.get('/summary', asyncHandler(async (req, res) => {
   ]);
 
   const filteredOrderIds = new Set(filteredOrders.map((order) => order.order_id));
+  const deliveredOrderIds = new Set(
+    filteredOrders
+      .filter((order) => String(order.delivery_status || '') === 'delivered')
+      .map((order) => order.order_id),
+  );
   const relevantItems = filteredOrderIds.size
     ? await db
       .select({ order_id: orderItems.order_id, product_id: orderItems.product_id, quantity: orderItems.quantity, price: orderItems.price })
@@ -95,9 +100,12 @@ router.get('/summary', asyncHandler(async (req, res) => {
       .where(inArray(orderItems.order_id, [...filteredOrderIds]))
     : [];
 
-  const grossSales = relevantItems.reduce((sum, item) => sum + Number(item.quantity) * Number(item.price), 0);
-  const totalDiscounts = filteredOrders.reduce((sum, order) => sum + Number(order.discount || 0), 0);
-  const totalDeliveryFees = filteredOrders.reduce((sum, order) => sum + Number(order.delivery_fee || 0), 0);
+  const deliveredOrders = filteredOrders.filter((order) => String(order.delivery_status || '') === 'delivered');
+  const deliveredItems = relevantItems.filter((item) => deliveredOrderIds.has(item.order_id));
+
+  const grossSales = deliveredItems.reduce((sum, item) => sum + Number(item.quantity) * Number(item.price), 0);
+  const totalDiscounts = deliveredOrders.reduce((sum, order) => sum + Number(order.discount || 0), 0);
+  const totalDeliveryFees = deliveredOrders.reduce((sum, order) => sum + Number(order.delivery_fee || 0), 0);
   const totalSales = Math.max(0, grossSales - totalDiscounts + totalDeliveryFees);
 
   const monthlyTrendByMonth = new Map();
@@ -118,7 +126,7 @@ router.get('/summary', asyncHandler(async (req, res) => {
 
   const orderDateById = new Map(filteredOrders.map((order) => [order.order_id, order.order_date]));
 
-  relevantItems.forEach((item) => {
+  deliveredItems.forEach((item) => {
     const orderDate = orderDateById.get(item.order_id);
     if (!orderDate) {
       return;
@@ -139,7 +147,7 @@ router.get('/summary', asyncHandler(async (req, res) => {
 
   const productSales = new Map();
   const productRevenue = new Map();
-  relevantItems.forEach((item) => {
+  deliveredItems.forEach((item) => {
     productSales.set(item.product_id, (productSales.get(item.product_id) || 0) + Number(item.quantity));
     productRevenue.set(item.product_id, (productRevenue.get(item.product_id) || 0) + Number(item.quantity) * Number(item.price));
   });
@@ -180,11 +188,11 @@ router.get('/summary', asyncHandler(async (req, res) => {
   const scheduledDeliveries = filteredOrders.filter((order) => String(order.delivery_status || '') === 'pending').length;
   const outForDelivery = filteredOrders.filter((order) => String(order.delivery_status || '') === 'out_for_delivery').length;
   const pendingDeliveries = filteredOrders.filter((order) => DELIVERY_BACKLOG_STATUSES.has(String(order.delivery_status || ''))).length;
-  const deliveredOrders = filteredOrders.filter((order) => String(order.delivery_status || '') === 'delivered').length;
+  const deliveredOrdersCount = deliveredOrders.length;
   const failedDeliveries = filteredOrders.filter((order) => String(order.delivery_status || '') === 'failed').length;
   const cancelledOrders = filteredOrders.filter((order) => String(order.delivery_status || '') === 'cancelled').length;
-  const totalUnitsSold = relevantItems.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
-  const averageOrderValue = filteredOrders.length ? totalSales / filteredOrders.length : 0;
+  const totalUnitsSold = deliveredItems.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+  const averageOrderValue = deliveredOrdersCount ? totalSales / deliveredOrdersCount : 0;
 
   res.json({
     summary: {
@@ -200,7 +208,7 @@ router.get('/summary', asyncHandler(async (req, res) => {
       scheduledDeliveries,
       outForDelivery,
       pendingDeliveries,
-      deliveredOrders,
+      deliveredOrders: deliveredOrdersCount,
       failedDeliveries,
       cancelledOrders,
       totalUnitsSold,
