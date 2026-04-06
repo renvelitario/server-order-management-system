@@ -69,6 +69,7 @@ export const products = pgTable('ims_products', {
 	...timestamps,
 }, (table) => ({
 	productsSkuUnique: uniqueIndex('ims_products_sku_unique').on(table.sku),
+	productsNameIdx: index('ims_products_name_idx').on(table.product_name),
 	productsPriceCheck: check('ims_products_price_check', sql`${table.price} >= 0`),
 	productsStatusCheck: check('ims_products_status_check', sql`${table.status} IN ('active', 'inactive')`)
 }));
@@ -79,7 +80,10 @@ export const customers = pgTable('ims_customers', {
 	address: text('address').notNull(),
 	contact_no: varchar('contact_no', { length: 20 }).notNull(),
 	...timestamps,
-});
+}, (table) => ({
+	customersNameIdx: index('ims_customers_name_idx').on(table.name),
+	customersContactIdx: index('ims_customers_contact_idx').on(table.contact_no),
+}));
 
 
 export const orders = pgTable('ims_orders', {
@@ -107,6 +111,8 @@ export const orders = pgTable('ims_orders', {
 		columns: [table.delivered_by],
 		foreignColumns: [users.user_id]
 	}),
+	ordersOrderDateIdx: index('ims_orders_order_date_idx').on(table.order_date),
+	ordersDeliveryWindowIdx: index('ims_orders_delivery_window_idx').on(table.delivery_date, table.delivery_status),
 	ordersDeliveryStatusCheck: check('ims_orders_delivery_status_check', sql`${table.delivery_status} IN ('unassigned', 'pending', 'out_for_delivery', 'delivered', 'failed', 'cancelled')`)
 }));
 
@@ -122,6 +128,7 @@ export const orderItems = pgTable('ims_order_items', {
 		columns: [table.order_id],
 		foreignColumns: [orders.order_id]
 	}),
+	orderItemsOrderIdx: index('ims_order_items_order_idx').on(table.order_id),
 	productIdFk: foreignKey({
 		columns: [table.product_id],
 		foreignColumns: [products.product_id]

@@ -19,14 +19,6 @@ export const asyncHandler = (handler: AsyncRouteHandler): RequestHandler => asyn
   }
 };
 
-export const sanitizeErrorMessage = (statusCode: number, fallback = 'Something went wrong.'): string => {
-  if (statusCode >= 500) {
-    return fallback;
-  }
-
-  return fallback;
-};
-
 export const errorHandler = (error: unknown, req: Request, res: Response, _next: NextFunction): void => {
   const appError = error as Partial<AppError> | undefined;
   const statusCode = Number(appError?.statusCode) || 500;

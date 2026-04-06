@@ -3,7 +3,9 @@ import { and, desc, gte, inArray, lte, sql } from 'drizzle-orm';
 import { db } from '../db/db.js';
 import { customers, orderItems, orders, products } from '../db/schema.js';
 import { requireAuth } from '../middleware/auth.js';
+import { validate } from '../middleware/validate.js';
 import { asyncHandler } from '../utils/errors.js';
+import { dashboardQuerySchema } from '../validators/entity.js';
 
 const router = express.Router();
 router.use(requireAuth);
@@ -49,7 +51,7 @@ const resolveRange = (query) => {
   };
 };
 
-router.get('/summary', asyncHandler(async (req, res) => {
+router.get('/summary', validate(dashboardQuerySchema, 'query'), asyncHandler(async (req, res) => {
   const range = resolveRange(req.query);
   const orderFilters = [];
 
@@ -220,7 +222,7 @@ router.get('/summary', asyncHandler(async (req, res) => {
   });
 }));
 
-router.get('/recent-orders', asyncHandler(async (req, res) => {
+router.get('/recent-orders', validate(dashboardQuerySchema, 'query'), asyncHandler(async (req, res) => {
   const range = resolveRange(req.query);
   const orderFilters = [];
 

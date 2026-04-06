@@ -1,7 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import { supabaseAdmin } from '../db/db.js';
 import { getLocalUserByAuthUser } from '../utils/authUser.js';
-import { getCurrentDeviceId, isDeviceSessionRevoked, trackUserDevice } from '../utils/deviceTracking.js';
+import { getCurrentDeviceId, hasCurrentDeviceIdHeader, isDeviceSessionRevoked, trackUserDevice } from '../utils/deviceTracking.js';
 
 const ACTIVE_STATUS = 'active';
 
@@ -36,6 +36,10 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
     req.localUser = localUser;
 
     const currentDeviceId = getCurrentDeviceId(req);
+    if (hasCurrentDeviceIdHeader(req) && !currentDeviceId) {
+      return res.status(400).json({ error: 'Invalid device identifier.' });
+    }
+
     if (currentDeviceId && localUser.user_id) {
       const revoked = await isDeviceSessionRevoked(Number(localUser.user_id), currentDeviceId);
       if (revoked) {
