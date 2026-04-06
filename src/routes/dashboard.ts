@@ -235,6 +235,8 @@ router.get('/recent-orders', asyncHandler(async (req, res) => {
       order_id: orders.order_id,
       customer_id: orders.customer_id,
       order_date: orders.order_date,
+      delivery_date: orders.delivery_date,
+      delivery_status: orders.delivery_status,
     })
     .from(orders)
     .where(orderFilters.length ? and(...orderFilters) : undefined)
@@ -253,6 +255,8 @@ router.get('/recent-orders', asyncHandler(async (req, res) => {
         order_id: orders.order_id,
         customer_id: orders.customer_id,
         order_date: orders.order_date,
+        delivery_date: orders.delivery_date,
+        delivery_status: orders.delivery_status,
       })
       .from(orders)
       .orderBy(desc(orders.order_date))
