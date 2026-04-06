@@ -1,9 +1,20 @@
 import type { Request, Response } from 'express';
-import { eq, inArray } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { db } from '../db/db.js';
-import { customers, orders, orderItems, products } from '../db/schema.js';
+import { orders, orderItems } from '../db/schema.js';
 import { AppError } from '../utils/errors.js';
 import { createNotificationsForRole } from '../utils/notifications.js';
+import {
+  buildOrderUpdatePayload,
+  calculateOrderTotal,
+  ensureCustomerExists,
+  ensureProductsAreActive,
+  getUniqueProductIds,
+  insertOrderItems,
+  orderReturningFields,
+  resolveInitialDeliveryStatus,
+  type OrderPayload,
+} from './orders.write.service.js';
 import {
   DELIVERY_STATUSES,
   canDeliveryUserAccessOrderToday,
@@ -15,55 +26,15 @@ import {
   parseOrderDate,
 } from './orders.helpers.js';
 
-type OrderPayload = {
-  customer_id: number;
-  order_date?: string;
-  delivery_date?: string;
-  items_data: Array<{ product_id: number; quantity: number; price: number }>;
-  discount?: number;
-  delivery_fee?: number;
-};
-
 export const createOrderHandler = async (req: Request, res: Response) => {
   const { customer_id, order_date, items_data, delivery_date, discount = 0, delivery_fee = 0 } = req.body as OrderPayload;
-  const uniqueProductIds: number[] = [...new Set(items_data.map((item) => item.product_id))];
+  const uniqueProductIds = getUniqueProductIds(items_data);
 
   const result = await db.transaction(async (tx) => {
-    const customerRows = await tx
-      .select({ customer_id: customers.customer_id })
-      .from(customers)
-      .where(eq(customers.customer_id, customer_id))
-      .limit(1);
+    await ensureCustomerExists(tx, customer_id);
+    await ensureProductsAreActive(tx, uniqueProductIds);
 
-    if (!customerRows.length) {
-      throw new AppError(404, `Customer ${customer_id} not found.`);
-    }
-
-    const productRows = await tx
-      .select({
-        product_id: products.product_id,
-        status: products.status,
-      })
-      .from(products)
-      .where(inArray(products.product_id, uniqueProductIds));
-
-    const productById = new Map(productRows.map((row) => [row.product_id, row]));
-
-    for (const productId of uniqueProductIds) {
-      const product = productById.get(productId);
-      if (!product) {
-        throw new AppError(404, `Product ${productId} not found.`);
-      }
-
-      if (String(product.status).toLowerCase() !== 'active') {
-        throw new AppError(400, `Product ${productId} is not active.`);
-      }
-    }
-
-    const parsedDeliveryDate = parseDeliveryDate(delivery_date);
-    const initialDeliveryStatus = parsedDeliveryDate
-      ? DELIVERY_STATUSES.pending
-      : DELIVERY_STATUSES.unassigned;
+    const { parsedDeliveryDate, initialDeliveryStatus } = resolveInitialDeliveryStatus(delivery_date);
 
     const [newOrder] = await tx.insert(orders).values({
       customer_id,
@@ -75,20 +46,8 @@ export const createOrderHandler = async (req: Request, res: Response) => {
       delivery_fee,
     }).returning();
 
-    const createdItems = [];
-
-    for (const item of items_data) {
-      const [createdItem] = await tx.insert(orderItems).values({
-        order_id: newOrder.order_id,
-        product_id: item.product_id,
-        quantity: item.quantity,
-        price: item.price,
-      }).returning();
-
-      createdItems.push(createdItem);
-    }
-
-    const totalAmount = createdItems.reduce((sum, item) => sum + (Number(item.quantity) * Number(item.price)), 0);
+    const createdItems = await insertOrderItems(tx, newOrder.order_id, items_data);
+    const totalAmount = calculateOrderTotal(createdItems);
     return {
       ...newOrder,
       items: createdItems,
@@ -102,7 +61,7 @@ export const createOrderHandler = async (req: Request, res: Response) => {
 export const updateOrderHandler = async (req: Request, res: Response) => {
   const orderId = Number(req.params.id);
   const { customer_id, order_date, items_data, delivery_date } = req.body as OrderPayload;
-  const uniqueProductIds: number[] = [...new Set(items_data.map((item) => item.product_id))];
+  const uniqueProductIds = getUniqueProductIds(items_data);
 
   const result = await db.transaction(async (tx) => {
     const existingOrderRows = await tx
@@ -123,102 +82,26 @@ export const updateOrderHandler = async (req: Request, res: Response) => {
       throw new AppError(404, 'Order not found.');
     }
 
-    const customerRows = await tx
-      .select({ customer_id: customers.customer_id })
-      .from(customers)
-      .where(eq(customers.customer_id, customer_id))
-      .limit(1);
+    await ensureCustomerExists(tx, customer_id);
+    await ensureProductsAreActive(tx, uniqueProductIds);
 
-    if (!customerRows.length) {
-      throw new AppError(404, `Customer ${customer_id} not found.`);
-    }
-
-    const productRows = uniqueProductIds.length
-      ? await tx
-          .select({
-            product_id: products.product_id,
-            status: products.status,
-          })
-          .from(products)
-          .where(inArray(products.product_id, uniqueProductIds))
-      : [];
-
-    const productById = new Map(productRows.map((row) => [row.product_id, row]));
-
-    for (const productId of uniqueProductIds) {
-      const product = productById.get(productId);
-      if (!product) {
-        throw new AppError(404, `Product ${productId} not found.`);
-      }
-
-      if (String(product.status).toLowerCase() !== 'active') {
-        throw new AppError(400, `Product ${productId} is not active.`);
-      }
-    }
-
-    const parsedDeliveryDate = delivery_date === undefined ? undefined : parseDeliveryDate(delivery_date);
-    const updatePayload: {
-      customer_id: number;
-      order_date?: Date;
-      delivery_date?: Date | null;
-      delivery_status?: string;
-      delivery_user_id?: number | null;
-      delivered_at?: Date | null;
-      delivered_by?: number | null;
-    } = {
-      customer_id,
-    };
-
-    if (order_date !== undefined) {
-      updatePayload.order_date = parseOrderDate(order_date);
-    }
-
-    if (delivery_date !== undefined) {
-      updatePayload.delivery_date = parsedDeliveryDate;
-
-      if (!parsedDeliveryDate) {
-        updatePayload.delivery_status = DELIVERY_STATUSES.unassigned;
-        updatePayload.delivery_user_id = null;
-        updatePayload.delivered_at = null;
-        updatePayload.delivered_by = null;
-      } else if (existingOrderRows[0].delivery_status === DELIVERY_STATUSES.unassigned) {
-        updatePayload.delivery_status = DELIVERY_STATUSES.pending;
-      }
-    }
+    const updatePayload = buildOrderUpdatePayload({
+      customerId: customer_id,
+      orderDate: order_date,
+      deliveryDate: delivery_date,
+      existingDeliveryStatus: existingOrderRows[0].delivery_status,
+    });
 
     const [updatedOrder] = await tx
       .update(orders)
       .set(updatePayload)
       .where(eq(orders.order_id, orderId))
-      .returning({
-        order_id: orders.order_id,
-        customer_id: orders.customer_id,
-        order_date: orders.order_date,
-        delivery_date: orders.delivery_date,
-        delivery_status: orders.delivery_status,
-        delivery_user_id: orders.delivery_user_id,
-        delivered_at: orders.delivered_at,
-        delivered_by: orders.delivered_by,
-      });
+      .returning(orderReturningFields);
 
     await tx.delete(orderItems).where(eq(orderItems.order_id, orderId));
 
-    const updatedItems = [];
-    for (const item of items_data) {
-      const [createdItem] = await tx
-        .insert(orderItems)
-        .values({
-          order_id: orderId,
-          product_id: item.product_id,
-          quantity: item.quantity,
-          price: item.price,
-        })
-        .returning();
-
-      updatedItems.push(createdItem);
-    }
-
-    const totalAmount = updatedItems.reduce((sum, item) => sum + (Number(item.quantity) * Number(item.price)), 0);
+    const updatedItems = await insertOrderItems(tx, orderId, items_data);
+    const totalAmount = calculateOrderTotal(updatedItems);
 
     return {
       ...updatedOrder,

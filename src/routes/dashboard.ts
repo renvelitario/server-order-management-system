@@ -51,6 +51,23 @@ const resolveRange = (query) => {
   };
 };
 
+type DashboardOrderRow = {
+  order_id: number;
+  customer_id: number;
+  order_date: Date;
+  delivery_status: string;
+  discount: number;
+  delivery_fee: number;
+};
+
+type DashboardRecentOrderRow = {
+  order_id: number;
+  customer_id: number;
+  order_date: Date;
+  delivery_date: Date | null;
+  delivery_status: string;
+};
+
 router.get('/summary', validate(dashboardQuerySchema, 'query'), asyncHandler(async (req, res) => {
   const range = resolveRange(req.query);
   const orderFilters = [];
@@ -69,24 +86,45 @@ router.get('/summary', validate(dashboardQuerySchema, 'query'), asyncHandler(asy
     orderFilters.push(lte(orders.order_date, range.to));
   }
 
-  const [productCountRow, customerCountRow, filteredOrders] = await Promise.all([
+  const selectFilteredOrders = async (useFilters: boolean) => db
+    .select({
+      order_id: orders.order_id,
+      customer_id: orders.customer_id,
+      order_date: orders.order_date,
+      delivery_status: orders.delivery_status,
+      discount: orders.discount,
+      delivery_fee: orders.delivery_fee,
+    })
+    .from(orders)
+    .where(useFilters && orderFilters.length ? and(...orderFilters) : undefined);
+
+  let filteredOrders: DashboardOrderRow[];
+  try {
+    filteredOrders = await selectFilteredOrders(true);
+  } catch (error) {
+    if (!orderFilters.length) {
+      throw error;
+    }
+
+    console.warn('[DASHBOARD] summary filter query failed; falling back to all-time.', {
+      error: String(error),
+      query: req.query,
+    });
+    debugLog('[DEBUG_DASHBOARD]', {
+      route: 'dashboard.summary',
+      fallback: 'all-time-on-filter-error',
+      error: String(error),
+    });
+    filteredOrders = await selectFilteredOrders(false);
+  }
+
+  const [productCountRow, customerCountRow] = await Promise.all([
     db
       .select({
         count: sql`count(*)::int`,
       })
       .from(products),
     db.select({ count: sql`count(*)::int` }).from(customers),
-    db
-      .select({
-        order_id: orders.order_id,
-        customer_id: orders.customer_id,
-        order_date: orders.order_date,
-        delivery_status: orders.delivery_status,
-        discount: orders.discount,
-        delivery_fee: orders.delivery_fee,
-      })
-      .from(orders)
-      .where(orderFilters.length ? and(...orderFilters) : undefined),
   ]);
 
   const filteredOrderIds = new Set(filteredOrders.map((order) => order.order_id));
@@ -240,7 +278,7 @@ router.get('/recent-orders', validate(dashboardQuerySchema, 'query'), asyncHandl
     orderFilters.push(lte(orders.order_date, range.to));
   }
 
-  let latestOrders = await db
+  const selectRecentOrders = async (useFilters: boolean) => db
     .select({
       order_id: orders.order_id,
       customer_id: orders.customer_id,
@@ -249,9 +287,29 @@ router.get('/recent-orders', validate(dashboardQuerySchema, 'query'), asyncHandl
       delivery_status: orders.delivery_status,
     })
     .from(orders)
-    .where(orderFilters.length ? and(...orderFilters) : undefined)
+    .where(useFilters && orderFilters.length ? and(...orderFilters) : undefined)
     .orderBy(desc(orders.order_date))
     .limit(10);
+
+  let latestOrders: DashboardRecentOrderRow[];
+  try {
+    latestOrders = await selectRecentOrders(true);
+  } catch (error) {
+    if (!orderFilters.length) {
+      throw error;
+    }
+
+    console.warn('[DASHBOARD] recent-orders filter query failed; falling back to all-time.', {
+      error: String(error),
+      query: req.query,
+    });
+    debugLog('[DEBUG_DASHBOARD]', {
+      route: 'dashboard.recent-orders',
+      fallback: 'all-time-on-filter-error',
+      error: String(error),
+    });
+    latestOrders = await selectRecentOrders(false);
+  }
 
   // Fallback to full dataset if a provided date range produces no rows.
   if (!latestOrders.length && orderFilters.length) {
