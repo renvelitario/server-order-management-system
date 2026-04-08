@@ -161,4 +161,24 @@ describe('delivery user order access', () => {
     expect(response.body.error).toBe('Delivery users can only update orders that are out for delivery today.');
     expect(mockUpdate).not.toHaveBeenCalled();
   });
+
+  it('allows delivery users to complete today\'s out-for-delivery orders', async () => {
+    const app = await createApp();
+
+    mockSelect.mockImplementationOnce(() => createOrderLookupBuilder([
+      {
+        order_id: 123,
+        delivery_status: 'out_for_delivery',
+        delivery_user_id: null,
+        delivery_date: buildTodayDate(),
+      },
+    ]));
+
+    const response = await request(app)
+      .patch('/api/orders/123/delivery-status')
+      .set('X-Client-Utc-Offset-Minutes', '0')
+      .send({ delivery_status: 'delivered' });
+
+    expect(response.status).not.toBe(403);
+  });
 });

@@ -871,6 +871,7 @@ router.patch('/:id/delivery-status', requireRole('Admin', 'User'), validate(idPa
       order_id: orders.order_id,
       delivery_status: orders.delivery_status,
       delivery_user_id: orders.delivery_user_id,
+      delivery_date: orders.delivery_date,
     })
     .from(orders)
     .where(eq(orders.order_id, orderId))
