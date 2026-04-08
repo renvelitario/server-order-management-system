@@ -216,7 +216,11 @@ const canDeliveryUserAccessOrderToday = (order, utcOffsetMinutes = null) => {
     return false;
   }
 
-  return order.delivery_status === DELIVERY_STATUSES.out_for_delivery
+  return [
+    DELIVERY_STATUSES.out_for_delivery,
+    DELIVERY_STATUSES.delivered,
+    DELIVERY_STATUSES.failed,
+  ].includes(order.delivery_status)
     && isTodayDeliveryDate(order.delivery_date, utcOffsetMinutes);
 };
 
@@ -528,7 +532,11 @@ router.get('/delivery/today', requireRole('Admin', 'User'), asyncHandler(async (
       DELIVERY_STATUSES.failed,
     ]));
   } else {
-    filters.push(eq(orders.delivery_status, DELIVERY_STATUSES.out_for_delivery));
+    filters.push(inArray(orders.delivery_status, [
+      DELIVERY_STATUSES.out_for_delivery,
+      DELIVERY_STATUSES.delivered,
+      DELIVERY_STATUSES.failed,
+    ]));
   }
 
   if (search) {
@@ -889,9 +897,11 @@ router.patch('/:id/delivery-status', requireRole('Admin', 'User'), validate(idPa
     }
 
     const canCompleteActiveDelivery = [DELIVERY_STATUSES.delivered, DELIVERY_STATUSES.failed].includes(delivery_status);
+    const canUndoDeliveryStatus = delivery_status === DELIVERY_STATUSES.out_for_delivery
+      && [DELIVERY_STATUSES.delivered, DELIVERY_STATUSES.failed].includes(existingOrder.delivery_status);
 
-    if (!canCompleteActiveDelivery) {
-      throw new AppError(403, 'Delivery users can only mark today\'s out-for-delivery orders as delivered or failed.');
+    if (!canCompleteActiveDelivery && !canUndoDeliveryStatus) {
+      throw new AppError(403, 'Delivery users can only mark today\'s out-for-delivery orders as delivered or failed, or undo a delivered or failed delivery.');
     }
   }
 
