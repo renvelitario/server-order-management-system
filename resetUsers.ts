@@ -1,12 +1,16 @@
 import 'dotenv/config';
 import { sql } from 'drizzle-orm';
 import { db, supabaseAdmin } from './src/db/db.js';
-import { orders, users } from './src/db/schema.js';
+import { orders, users, userDevices } from './src/db/schema.js';
 
 const DEMO_ADMIN_EMAIL = 'admin@admin.com';
 const DEMO_ADMIN_PASSWORD = 'admin';
 const DEMO_ADMIN_USERNAME = 'Admin';
 const DEMO_ADMIN_NAME = 'Admin';
+const DEMO_USER_EMAIL = 'user@user.com';
+const DEMO_USER_PASSWORD = 'user';
+const DEMO_USER_USERNAME = 'User';
+const DEMO_USER_NAME = 'Demo User';
 const SUPABASE_PAGE_SIZE = 200;
 
 async function listAllAuthUsers() {
@@ -68,6 +72,9 @@ async function resetLocalUsers() {
       delivered_by: null,
     });
 
+  console.log('Deleting user devices...');
+  await db.delete(userDevices);
+
   console.log('Deleting local users...');
   await db.delete(users);
 
@@ -104,12 +111,36 @@ async function seedDemoAdmin() {
   });
 }
 
+async function seedDemoUser() {
+  console.log('Creating demo user in Supabase Auth...');
+  const { data, error } = await supabaseAdmin.auth.admin.createUser({
+    email: DEMO_USER_EMAIL,
+    password: DEMO_USER_PASSWORD,
+    email_confirm: true,
+  });
+
+  if (error || !data.user) {
+    throw error ?? new Error('Supabase did not return the created user.');
+  }
+
+  console.log('Creating demo user profile in ims_users...');
+  await db.insert(users).values({
+    email: DEMO_USER_EMAIL,
+    username: DEMO_USER_USERNAME,
+    name: DEMO_USER_NAME,
+    acc_type: 'User',
+    status: 'Active',
+    supabase_id: data.user.id,
+  });
+}
+
 async function resetUsers() {
   try {
     await resetLocalUsers();
     await deleteAllAuthUsers();
     await seedDemoAdmin();
-    console.log('Users reset complete. Demo admin restored.');
+    await seedDemoUser();
+    console.log('Users reset complete. Demo admin and user restored.');
     process.exit(0);
   } catch (error) {
     console.error('Failed to reset users:', error);
