@@ -25,6 +25,7 @@ import {
 } from '../utils/deviceTracking.js';
 
 const router = express.Router();
+const ACTIVE_STATUS = 'active';
 const DEFAULT_INACTIVITY_MINUTES = 60;
 const MIN_INACTIVITY_MINUTES = 10;
 const MAX_INACTIVITY_MINUTES = 480;
@@ -87,8 +88,16 @@ router.post('/login', validate(loginSchema), asyncHandler(async (req, res) => {
   console.log(`Login successful for: ${userEmail}`);
 
   const localUser = await getLocalUserByAuthUser(data.user);
+  if (!localUser) {
+    throw new AppError(403, 'Account is not provisioned.');
+  }
+
+  if (String(localUser.status || '').toLowerCase() !== ACTIVE_STATUS) {
+    throw new AppError(403, 'Your account has been disabled. Please contact your organization admin to activate your account.');
+  }
+
   const currentDeviceId = getCurrentDeviceId(req);
-  if (localUser?.user_id && currentDeviceId) {
+  if (currentDeviceId) {
     await clearDeviceRevocation(Number(localUser.user_id), currentDeviceId);
   }
 
@@ -96,6 +105,7 @@ router.post('/login', validate(loginSchema), asyncHandler(async (req, res) => {
     message: 'Login successful.',
     session: data.session,
     user: data.user,
+    local_user: localUser,
   });
 }));
 
