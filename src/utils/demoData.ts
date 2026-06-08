@@ -103,14 +103,6 @@ const ensureDemoUser = async (demoUser: DemoUser) => {
     }
 
     authUserId = data.user.id;
-  } else {
-    const { error } = await supabaseAdmin.auth.admin.updateUserById(authUserId, {
-      password: demoUser.password,
-    });
-
-    if (error) {
-      throw error;
-    }
   }
 
   const [localUser] = await db
