@@ -19,6 +19,7 @@ router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
   const whereClause = search
     ? or(
       sql`${customers.customer_id}::text ILIKE ${`%${search}%`}`,
+      ilike(customers.student_number, `%${search}%`),
       ilike(customers.name, `%${search}%`),
       ilike(customers.address, `%${search}%`),
       ilike(customers.contact_no, `%${search}%`),
@@ -35,6 +36,7 @@ router.get('/', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
     db
       .select({
         customer_id: customers.customer_id,
+        student_number: customers.student_number,
         name: customers.name,
         address: customers.address,
         contact_no: customers.contact_no,
@@ -66,12 +68,32 @@ router.get('/:id', requireRole('Admin', 'User'), validate(idParamSchema, 'params
 }));
 
 router.post('/', requireAdmin, validate(customerPayloadSchema), asyncHandler(async (req, res) => {
+  const duplicate = await db
+    .select({ customer_id: customers.customer_id })
+    .from(customers)
+    .where(eq(customers.student_number, req.body.student_number))
+    .limit(1);
+
+  if (duplicate.length) {
+    throw new AppError(409, 'Student number already exists.');
+  }
+
   const [newCustomer] = await db.insert(customers).values(req.body).returning();
   res.status(201).json(newCustomer);
 }));
 
 router.put('/:id', requireAdmin, validate(idParamSchema, 'params'), validate(customerPayloadSchema), asyncHandler(async (req, res) => {
   const customerId = Number(req.params.id);
+  const duplicate = await db
+    .select({ customer_id: customers.customer_id })
+    .from(customers)
+    .where(eq(customers.student_number, req.body.student_number))
+    .limit(1);
+
+  if (duplicate.length && duplicate[0].customer_id !== customerId) {
+    throw new AppError(409, 'Student number already exists.');
+  }
+
   const [updatedCustomer] = await db.update(customers).set(req.body).where(eq(customers.customer_id, customerId)).returning();
 
   if (!updatedCustomer) {

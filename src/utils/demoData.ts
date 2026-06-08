@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { inArray, sql } from 'drizzle-orm';
 import { db, supabaseAdmin } from '../db/db.js';
 import {
   customers,
@@ -33,14 +33,7 @@ const DEMO_USER = {
   status: 'Active',
 };
 
-const DEMO_PRODUCT_SKUS = ['OMS-RICE-25KG', 'OMS-COFFEE-1KG', 'OMS-CUP-12OZ', 'OMS-BOX-MED'];
-const DEMO_CUSTOMER_CONTACTS = ['09171110001', '09171110002', '09171110003', '09171110004'];
 const DEMO_DEVICE_IDS = ['demo-admin-browser', 'demo-rider-phone'];
-const DEMO_NOTIFICATION_EVENT_TYPES = [
-  'demo_admin_attention',
-  'demo_delivery_assignment',
-  'demo_delivery_update',
-];
 
 type DemoUser = typeof DEMO_ADMIN;
 type SupabaseAuthUserSummary = {
@@ -140,64 +133,43 @@ const ensureDemoUser = async (demoUser: DemoUser) => {
   return localUser;
 };
 
-const clearDemoRows = async () => {
-  const demoProductRows = await db
-    .select({ product_id: products.product_id })
-    .from(products)
-    .where(inArray(products.sku, DEMO_PRODUCT_SKUS));
-  const demoCustomerRows = await db
-    .select({ customer_id: customers.customer_id })
-    .from(customers)
-    .where(inArray(customers.contact_no, DEMO_CUSTOMER_CONTACTS));
+const resetSequence = async (tableName: string, columnName: string) => {
+  await db.execute(sql.raw(`ALTER SEQUENCE ${tableName}_${columnName}_seq RESTART WITH 1`));
+};
 
-  const demoProductIds = demoProductRows.map((product) => product.product_id);
-  const demoCustomerIds = demoCustomerRows.map((customer) => customer.customer_id);
-
-  const orderIdsByCustomer = demoCustomerIds.length
-    ? await db
-      .select({ order_id: orders.order_id })
-      .from(orders)
-      .where(inArray(orders.customer_id, demoCustomerIds))
-    : [];
-
-  const orderIdsByProduct = demoProductIds.length
-    ? await db
-      .selectDistinct({ order_id: orderItems.order_id })
-      .from(orderItems)
-      .where(inArray(orderItems.product_id, demoProductIds))
-    : [];
-
-  const demoOrderIds = [...new Set([
-    ...orderIdsByCustomer.map((order) => order.order_id),
-    ...orderIdsByProduct.map((item) => item.order_id),
-  ])];
-
-  if (demoOrderIds.length) {
-    await db.delete(notifications).where(inArray(notifications.order_id, demoOrderIds));
-    await db.delete(orderItems).where(inArray(orderItems.order_id, demoOrderIds));
-    await db.delete(orders).where(inArray(orders.order_id, demoOrderIds));
-  }
-
-  await db.delete(notifications).where(inArray(notifications.event_type, DEMO_NOTIFICATION_EVENT_TYPES));
+const clearBusinessData = async () => {
+  await db.delete(notifications);
+  await db.delete(orderItems);
+  await db.delete(orders);
+  await db.delete(customers);
+  await db.delete(products);
   await db.delete(userDevices).where(inArray(userDevices.device_id, DEMO_DEVICE_IDS));
 
-  if (demoCustomerIds.length) {
-    await db.delete(customers).where(inArray(customers.customer_id, demoCustomerIds));
-  }
-
-  if (demoProductIds.length) {
-    await db.delete(products).where(inArray(products.product_id, demoProductIds));
-  }
+  await resetSequence('ims_products', 'product_id');
+  await resetSequence('ims_customers', 'customer_id');
+  await resetSequence('ims_orders', 'order_id');
+  await resetSequence('ims_order_items', 'order_item_id');
+  await resetSequence('ims_notifications', 'notification_id');
 };
 
 const seedCatalog = async () => {
   const productRows = await db
     .insert(products)
     .values([
-      { sku: 'OMS-RICE-25KG', product_name: 'Premium Dinorado Rice 25kg', price: 1450, status: 'active' },
-      { sku: 'OMS-COFFEE-1KG', product_name: 'Barako Coffee Beans 1kg', price: 680, status: 'active' },
-      { sku: 'OMS-CUP-12OZ', product_name: 'Compostable Paper Cups 12oz', price: 220, status: 'active' },
-      { sku: 'OMS-BOX-MED', product_name: 'Medium Delivery Box', price: 35, status: 'inactive' },
+      { sku: 'FEUNB001', product_name: 'FEU Alabang Spiral Notebook 80 Leaves', price: 75, status: 'active' },
+      { sku: 'FEUPENBLK', product_name: 'Black Ballpoint Pen 3-Pack', price: 45, status: 'active' },
+      { sku: 'FEUPENCIL', product_name: 'HB Pencil Set with Eraser', price: 55, status: 'active' },
+      { sku: 'FEUYELLOW', product_name: 'Yellow Pad Paper 80 Sheets', price: 68, status: 'active' },
+      { sku: 'FEUCALSCI', product_name: 'Scientific Calculator', price: 785, status: 'active' },
+      { sku: 'FEUDRAFT', product_name: 'Engineering Drafting Kit', price: 520, status: 'active' },
+      { sku: 'FEUIDLACE', product_name: 'FEU Alabang ID Lace', price: 120, status: 'active' },
+      { sku: 'FEUTSHIRT', product_name: 'FEU Alabang Tamaraw Shirt', price: 450, status: 'active' },
+      { sku: 'FEUHOODIE', product_name: 'FEU Alabang Varsity Hoodie', price: 1250, status: 'active' },
+      { sku: 'FEUTOTE01', product_name: 'FEU Alabang Canvas Tote Bag', price: 280, status: 'active' },
+      { sku: 'FEUBOTTLE', product_name: 'FEU Alabang Stainless Tumbler', price: 390, status: 'active' },
+      { sku: 'FEUPEUNIF', product_name: 'PE Uniform Set', price: 850, status: 'active' },
+      { sku: 'FEUNSTP01', product_name: 'NSTP Workbook', price: 195, status: 'active' },
+      { sku: 'FEUENGDRAW', product_name: 'Engineering Drawing Manual', price: 340, status: 'inactive' },
     ])
     .returning({
       product_id: products.product_id,
@@ -209,28 +181,57 @@ const seedCatalog = async () => {
     .insert(customers)
     .values([
       {
-        name: 'Luna Cafe Makati',
-        address: '128 Dela Rosa Street, Legazpi Village, Makati City',
+        student_number: '202400031',
+        name: 'Alyssa Mendoza',
+        address: 'Pacita Complex, San Pedro, Laguna',
         contact_no: '09171110001',
       },
       {
-        name: 'Northpoint Mini Mart',
-        address: '44 Mindanao Avenue, Quezon City',
+        student_number: '202301482',
+        name: 'Miguel Santos',
+        address: 'Ayala Alabang Village, Muntinlupa City',
         contact_no: '09171110002',
       },
       {
-        name: 'Harbor Bistro',
-        address: 'Seaside Boulevard, Pasay City',
+        student_number: '202200817',
+        name: 'Bianca Reyes',
+        address: 'Barangay Poblacion, Muntinlupa City',
         contact_no: '09171110003',
       },
       {
-        name: 'Greenfield Office Pantry',
-        address: 'Greenfield District, Mandaluyong City',
+        student_number: '202500109',
+        name: 'Nathaniel Cruz',
+        address: 'San Antonio, Makati City',
         contact_no: '09171110004',
+      },
+      {
+        student_number: '202301944',
+        name: 'Sofia Dela Cruz',
+        address: 'Poblacion, Makati City',
+        contact_no: '09171110005',
+      },
+      {
+        student_number: '202100672',
+        name: 'Joaquin Navarro',
+        address: 'Barangay Putatan, Muntinlupa City',
+        contact_no: '09171110006',
+      },
+      {
+        student_number: '202401260',
+        name: 'Isabella Garcia',
+        address: 'Barangay San Vicente, San Pedro, Laguna',
+        contact_no: '09171110007',
+      },
+      {
+        student_number: '202202215',
+        name: 'Carlo Villanueva',
+        address: 'Barangay Tunasan, Muntinlupa City',
+        contact_no: '09171110008',
       },
     ])
     .returning({
       customer_id: customers.customer_id,
+      student_number: customers.student_number,
       name: customers.name,
     });
 
@@ -243,19 +244,18 @@ const seedOrders = async ({
   riderUserId,
 }: {
   productRows: Array<{ product_id: number; sku: string | null; price: number }>;
-  customerRows: Array<{ customer_id: number; name: string }>;
+  customerRows: Array<{ customer_id: number; student_number: string; name: string }>;
   riderUserId: number;
 }) => {
   const productBySku = new Map(productRows.map((product) => [product.sku, product]));
-  const [rice, coffee, cups] = [
-    productBySku.get('OMS-RICE-25KG'),
-    productBySku.get('OMS-COFFEE-1KG'),
-    productBySku.get('OMS-CUP-12OZ'),
-  ];
+  const getProduct = (sku: string) => {
+    const product = productBySku.get(sku);
+    if (!product) {
+      throw new Error(`Demo product ${sku} was not created correctly.`);
+    }
 
-  if (!rice || !coffee || !cups) {
-    throw new Error('Demo products were not created correctly.');
-  }
+    return product;
+  };
 
   const orderSpecs = [
     {
@@ -263,8 +263,12 @@ const seedOrders = async ({
       order_date: addDays(-2),
       delivery_date: null,
       delivery_status: 'unassigned',
-      items: [{ product: rice, quantity: 2 }],
-      discount: 100,
+      items: [
+        { product: getProduct('FEUNB001'), quantity: 35 },
+        { product: getProduct('FEUPENBLK'), quantity: 20 },
+        { product: getProduct('FEUYELLOW'), quantity: 15 },
+      ],
+      discount: 150,
       delivery_fee: 0,
     },
     {
@@ -272,8 +276,12 @@ const seedOrders = async ({
       order_date: addDays(-1),
       delivery_date: addDays(1),
       delivery_status: 'pending',
-      items: [{ product: coffee, quantity: 3 }, { product: cups, quantity: 4 }],
-      discount: 0,
+      items: [
+        { product: getProduct('FEUCALSCI'), quantity: 8 },
+        { product: getProduct('FEUNB001'), quantity: 12 },
+        { product: getProduct('FEUPENCIL'), quantity: 10 },
+      ],
+      discount: 250,
       delivery_fee: 120,
     },
     {
@@ -281,8 +289,12 @@ const seedOrders = async ({
       order_date: addDays(0),
       delivery_date: addDays(0),
       delivery_status: 'out_for_delivery',
-      items: [{ product: rice, quantity: 1 }, { product: cups, quantity: 8 }],
-      discount: 75,
+      items: [
+        { product: getProduct('FEUDRAFT'), quantity: 10 },
+        { product: getProduct('FEUCALSCI'), quantity: 5 },
+        { product: getProduct('FEUIDLACE'), quantity: 20 },
+      ],
+      discount: 300,
       delivery_fee: 150,
     },
     {
@@ -290,26 +302,112 @@ const seedOrders = async ({
       order_date: addDays(-5),
       delivery_date: addDays(0),
       delivery_status: 'delivered',
-      items: [{ product: coffee, quantity: 6 }, { product: cups, quantity: 10 }],
-      discount: 180,
+      items: [
+        { product: getProduct('FEUTSHIRT'), quantity: 18 },
+        { product: getProduct('FEUHOODIE'), quantity: 6 },
+        { product: getProduct('FEUTOTE01'), quantity: 12 },
+      ],
+      discount: 500,
       delivery_fee: 100,
       delivered_at: new Date(),
     },
     {
-      customer: customerRows[0],
+      customer: customerRows[4],
       order_date: addDays(-3),
       delivery_date: addDays(0),
       delivery_status: 'failed',
-      items: [{ product: rice, quantity: 1 }],
+      items: [
+        { product: getProduct('FEUNSTP01'), quantity: 25 },
+        { product: getProduct('FEUYELLOW'), quantity: 10 },
+      ],
       discount: 0,
       delivery_fee: 100,
     },
     {
-      customer: customerRows[1],
+      customer: customerRows[5],
       order_date: addDays(-4),
       delivery_date: addDays(2),
       delivery_status: 'cancelled',
-      items: [{ product: coffee, quantity: 1 }],
+      items: [
+        { product: getProduct('FEUPEUNIF'), quantity: 14 },
+        { product: getProduct('FEUBOTTLE'), quantity: 14 },
+      ],
+      discount: 0,
+      delivery_fee: 0,
+    },
+    {
+      customer: customerRows[6],
+      order_date: addDays(-7),
+      delivery_date: addDays(-1),
+      delivery_status: 'delivered',
+      items: [
+        { product: getProduct('FEUIDLACE'), quantity: 60 },
+        { product: getProduct('FEUTOTE01'), quantity: 40 },
+        { product: getProduct('FEUNB001'), quantity: 40 },
+        { product: getProduct('FEUPENBLK'), quantity: 40 },
+      ],
+      discount: 750,
+      delivery_fee: 180,
+      delivered_at: addDays(-1),
+    },
+    {
+      customer: customerRows[7],
+      order_date: addDays(-1),
+      delivery_date: addDays(1),
+      delivery_status: 'pending',
+      items: [
+        { product: getProduct('FEUNSTP01'), quantity: 45 },
+        { product: getProduct('FEUPENBLK'), quantity: 15 },
+      ],
+      discount: 200,
+      delivery_fee: 120,
+    },
+    {
+      customer: customerRows[1],
+      order_date: addDays(0),
+      delivery_date: addDays(0),
+      delivery_status: 'out_for_delivery',
+      items: [
+        { product: getProduct('FEUBOTTLE'), quantity: 9 },
+        { product: getProduct('FEUTSHIRT'), quantity: 9 },
+      ],
+      discount: 100,
+      delivery_fee: 90,
+    },
+    {
+      customer: customerRows[2],
+      order_date: addDays(-12),
+      delivery_date: addDays(-10),
+      delivery_status: 'delivered',
+      items: [
+        { product: getProduct('FEUDRAFT'), quantity: 6 },
+        { product: getProduct('FEUPENCIL'), quantity: 18 },
+      ],
+      discount: 120,
+      delivery_fee: 100,
+      delivered_at: addDays(-10),
+    },
+    {
+      customer: customerRows[3],
+      order_date: addDays(-6),
+      delivery_date: null,
+      delivery_status: 'unassigned',
+      items: [
+        { product: getProduct('FEUHOODIE'), quantity: 4 },
+        { product: getProduct('FEUBOTTLE'), quantity: 8 },
+      ],
+      discount: 0,
+      delivery_fee: 0,
+    },
+    {
+      customer: customerRows[0],
+      order_date: addDays(-8),
+      delivery_date: addDays(-6),
+      delivery_status: 'cancelled',
+      items: [
+        { product: getProduct('FEUCALSCI'), quantity: 3 },
+        { product: getProduct('FEUYELLOW'), quantity: 6 },
+      ],
       discount: 0,
       delivery_fee: 0,
     },
@@ -365,6 +463,15 @@ const seedNotificationsAndDevices = async ({
       is_read: false,
     },
     {
+      recipient_user_id: adminUserId,
+      event_type: 'demo_admin_read',
+      title: 'Demo bookstore order completed',
+      message: `Order #${ordersByStatus.get('delivered')} was already reviewed and marked as read.`,
+      order_id: ordersByStatus.get('delivered') ?? null,
+      is_read: true,
+      read_at: new Date(),
+    },
+    {
       recipient_user_id: riderUserId,
       event_type: 'demo_delivery_assignment',
       title: 'Demo order is out for delivery',
@@ -413,7 +520,7 @@ export const refreshDemoData = async () => {
     ensureDemoUser(DEMO_USER),
   ]);
 
-  await clearDemoRows();
+  await clearBusinessData();
   const catalog = await seedCatalog();
   const createdOrders = await seedOrders({
     ...catalog,

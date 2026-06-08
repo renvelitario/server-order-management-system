@@ -75,11 +75,14 @@ export const products = pgTable('ims_products', {
 
 export const customers = pgTable('ims_customers', {
 	customer_id: serial('customer_id').primaryKey(),
+	student_number: varchar('student_number', { length: 20 }).notNull(),
 	name: varchar('name', { length: 200 }).notNull(),
 	address: text('address').notNull(),
 	contact_no: varchar('contact_no', { length: 20 }).notNull(),
 	...timestamps,
-});
+}, (table) => ({
+	customersStudentNumberUnique: uniqueIndex('ims_customers_student_number_unique').on(table.student_number),
+}));
 
 
 export const orders = pgTable('ims_orders', {
