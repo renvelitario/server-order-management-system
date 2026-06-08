@@ -11,6 +11,7 @@ import usersRoutes from './routes/users.js';
 import dashboardRoutes from './routes/dashboard.js';
 import notificationsRoutes from './routes/notifications.js';
 import { errorHandler } from './utils/errors.js';
+import { startDemoDataRefresh } from './utils/demoData.js';
 
 const app = express();
 
@@ -71,6 +72,8 @@ if (process.env.NODE_ENV !== 'test') {
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
   });
+
+  startDemoDataRefresh();
 }
 
 export default app;

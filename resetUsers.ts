@@ -4,11 +4,11 @@ import { db, supabaseAdmin } from './src/db/db.js';
 import { orders, users, userDevices } from './src/db/schema.js';
 
 const DEMO_ADMIN_EMAIL = 'admin@admin.com';
-const DEMO_ADMIN_PASSWORD = 'admin';
+const DEMO_ADMIN_PASSWORD = 'Admin1234';
 const DEMO_ADMIN_USERNAME = 'Admin';
 const DEMO_ADMIN_NAME = 'Admin';
 const DEMO_USER_EMAIL = 'user@user.com';
-const DEMO_USER_PASSWORD = 'user';
+const DEMO_USER_PASSWORD = 'User1234';
 const DEMO_USER_USERNAME = 'User';
 const DEMO_USER_NAME = 'Demo User';
 const SUPABASE_PAGE_SIZE = 200;

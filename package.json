@@ -10,7 +10,8 @@
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
     "db:push": "drizzle-kit push",
-    "db:reset-users": "tsx resetUsers.ts"
+    "db:reset-users": "tsx resetUsers.ts",
+    "db:refresh-demo": "tsx refreshDemoData.ts"
   },
   "keywords": [],
   "author": "",
