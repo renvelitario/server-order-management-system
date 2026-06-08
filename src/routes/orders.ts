@@ -512,6 +512,64 @@ router.get('/delivery/admin', requireAdmin, asyncHandler(async (req, res) => {
   }));
 }));
 
+router.get('/delivery/admin/status-counts', requireAdmin, asyncHandler(async (req, res) => {
+  await applyDeliveryAutomation(null);
+
+  const { search } = parseListQuery(req.query);
+  const dateRangeFilter = parseDeliveryDateRangeFilter(req.query.date_range);
+  const filters = [];
+
+  const resolvedDateRange = resolveDeliveryDateRange(dateRangeFilter);
+  if (resolvedDateRange) {
+    filters.push(gte(orders.delivery_date, resolvedDateRange.start));
+    filters.push(lt(orders.delivery_date, resolvedDateRange.end));
+  }
+
+  if (search) {
+    filters.push(sql`(
+      ${orders.order_id}::text ILIKE ${`%${search}%`}
+      OR ${customers.name} ILIKE ${`%${search}%`}
+      OR ${customers.address} ILIKE ${`%${search}%`}
+      OR ${customers.contact_no} ILIKE ${`%${search}%`}
+      OR ${orders.order_date}::text ILIKE ${`%${search}%`}
+      OR ${orders.delivery_date}::text ILIKE ${`%${search}%`}
+      OR ${orders.delivery_status} ILIKE ${`%${search}%`}
+      OR (
+        SELECT COUNT(*)::text
+        FROM ${orderItems}
+        WHERE ${orderItems.order_id} = ${orders.order_id}
+      ) ILIKE ${`%${search}%`}
+      OR (
+        SELECT COALESCE(SUM(${orderItems.quantity} * ${orderItems.price}), 0)::text
+        FROM ${orderItems}
+        WHERE ${orderItems.order_id} = ${orders.order_id}
+      ) ILIKE ${`%${search}%`}
+    )`);
+  }
+
+  const whereClause = filters.length ? and(...filters) : undefined;
+  const countRows = await db
+    .select({
+      delivery_status: orders.delivery_status,
+      count: sql`count(*)::int`,
+    })
+    .from(orders)
+    .leftJoin(customers, eq(orders.customer_id, customers.customer_id))
+    .where(whereClause)
+    .groupBy(orders.delivery_status);
+
+  const counts = Object.values(DELIVERY_STATUSES).reduce<Record<string, number>>((acc, status) => {
+    acc[status] = 0;
+    return acc;
+  }, {});
+
+  countRows.forEach((row) => {
+    counts[row.delivery_status] = Number(row.count || 0);
+  });
+
+  res.json({ counts });
+}));
+
 router.get('/delivery/today', requireRole('Admin', 'User'), asyncHandler(async (req, res) => {
   const utcOffsetMinutes = parseClientUtcOffsetMinutes(req);
   await applyDeliveryAutomation(utcOffsetMinutes);
