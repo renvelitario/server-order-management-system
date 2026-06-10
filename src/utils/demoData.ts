@@ -9,6 +9,7 @@ import {
   userDevices,
   users,
 } from '../db/schema.js';
+import { revokeAllTrackedDeviceSessions } from './deviceTracking.js';
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const SUPABASE_PAGE_SIZE = 200;
@@ -515,6 +516,7 @@ const seedNotificationsAndDevices = async ({
 };
 
 export const refreshDemoData = async () => {
+  const revokedSessionCount = await revokeAllTrackedDeviceSessions();
   const [adminUser, riderUser] = await Promise.all([
     ensureDemoUser(DEMO_ADMIN),
     ensureDemoUser(DEMO_USER),
@@ -541,6 +543,8 @@ export const refreshDemoData = async () => {
       true
     )
   `);
+
+  return { revokedSessionCount };
 };
 
 export const startDemoDataRefresh = () => {
@@ -556,8 +560,8 @@ export const startDemoDataRefresh = () => {
 
     refreshInProgress = true;
     try {
-      await refreshDemoData();
-      console.log('Demo data refreshed.');
+      const { revokedSessionCount } = await refreshDemoData();
+      console.log(`Demo data refreshed. Revoked ${revokedSessionCount} tracked session(s).`);
     } catch (error) {
       console.error('Failed to refresh demo data:', error);
     } finally {

@@ -31,7 +31,7 @@ const MIN_INACTIVITY_MINUTES = 10;
 const MAX_INACTIVITY_MINUTES = 480;
 const DEVICE_ACTIVE_FALLBACK_MINUTES = 24 * 60;
 
-const normalizeInactivityTimeout = (value) => {
+const normalizeInactivityTimeout = (value: unknown) => {
   const parsedValue = Number(value);
 
   if (!Number.isFinite(parsedValue)) {
@@ -65,14 +65,12 @@ router.post('/login', validate(loginSchema), asyncHandler(async (req, res) => {
     const [user] = await query.where(whereClause).limit(1);
 
     if (!user) {
-      console.warn(`Login failed: No user found for identifier: ${identifier} (isPhone: ${isPhone})`);
+      console.warn('Login failed: no matching local user for identifier type.', { isPhone });
       throw new AppError(401, 'Invalid credentials.');
     }
 
     userEmail = user.email;
   }
-
-  console.log(`Login attempt for email: ${userEmail}`);
 
   // Authenticate with Supabase using the email
   const { data, error } = await supabaseAdmin.auth.signInWithPassword({
@@ -84,8 +82,6 @@ router.post('/login', validate(loginSchema), asyncHandler(async (req, res) => {
     console.error('Supabase auth error:', error?.message || 'No session returned');
     throw new AppError(401, 'Invalid credentials.');
   }
-
-  console.log(`Login successful for: ${userEmail}`);
 
   const localUser = await getLocalUserByAuthUser(data.user);
   if (!localUser) {
@@ -313,7 +309,7 @@ router.patch('/users/:id', requireAuth, requireAdmin, validate(idParamSchema, 'p
   const userId = Number(req.params.id);
   const localAdminUserId = Number(req.localUser?.user_id);
   const {
-      name,
+    name,
     email,
     username,
     acc_type,
@@ -367,7 +363,7 @@ router.patch('/users/:id', requireAuth, requireAdmin, validate(idParamSchema, 'p
   const localUpdatePayload = {
     ...(email ? { email } : {}),
     ...(username ? { username } : {}),
-      ...(name ? { name } : {}),
+    ...(name ? { name } : {}),
     ...(acc_type ? { acc_type } : {}),
     ...(status ? { status } : {}),
   };

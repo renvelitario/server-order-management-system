@@ -1,5 +1,5 @@
 import type { Request } from 'express';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { db } from '../db/db.js';
 import { revokedDeviceSessions, userDevices } from '../db/schema.js';
 
@@ -108,6 +108,19 @@ export const revokeDeviceSession = async (userId: number, deviceId: string): Pro
         revoked_at: new Date(),
       },
     });
+};
+
+export const revokeAllTrackedDeviceSessions = async (): Promise<number> => {
+  const revokedRows = await db.execute(sql`
+    INSERT INTO ims_revoked_device_sessions (user_id, device_id, revoked_at)
+    SELECT user_id, device_id, NOW()
+    FROM ims_user_devices
+    ON CONFLICT (user_id, device_id)
+    DO UPDATE SET revoked_at = EXCLUDED.revoked_at
+    RETURNING user_id, device_id
+  `);
+
+  return revokedRows.rowCount ?? 0;
 };
 
 export const clearDeviceRevocation = async (userId: number, deviceId: string): Promise<void> => {
